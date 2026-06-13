@@ -30,7 +30,6 @@ env
 # Databases
 *.sqlite3
 .env
-.github/workflows/
 # Unit test / coverage reports
 htmlcov/
 .tox/
