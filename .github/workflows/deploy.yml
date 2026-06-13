@@ -1,0 +1,60 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+      - dev_mohan
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+#dfghfff
+    steps:
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1
+
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_KEY }}
+
+          script: |
+            cd /var/www/vega_traceability_backend
+            
+            # Authenticate using GitHub token
+            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            
+            # Fetch latest changes
+            git fetch --all
+            
+            # Checkout pushed branch
+            git checkout ${{ github.ref_name }}
+            
+            # Match server exactly with GitHub
+            git reset --hard origin/${{ github.ref_name }}
+            git log --oneline -1
+            
+            # Activate virtual environment
+            source venv/bin/activate
+            
+            # Install/update dependencies
+            pip install -r requirements.txt
+            
+            # Reload systemd configs
+            sudo systemctl daemon-reload
+            
+            # Restart FastAPI backend
+            sudo systemctl restart vega_traceability
+            
+            # Reload Apache reverse proxy
+            sudo systemctl reload apache2
+            
+            # Wait for startup
+            sleep 5
+            
+            # Verify service status
+            sudo systemctl is-active vega_traceability
+            
+            # Verify API response
+            curl http://127.0.0.1:8002/

@@ -14,7 +14,6 @@ env.bak/
 venv.bak/
 env
 firebase.json
-deployed.yml
 # Logs
 *.log
 
@@ -45,5 +44,3 @@ coverage.xml
 .pytest_cache/
 cover/
 /qrcodes
-deploy.yml
-deploye.yml
