@@ -1,0 +1,92 @@
+erDiagram
+    %% User & Master Entities
+    USER {
+        uuid id PK
+        string role "Super Admin, Admin, Scanner, Linker, Inspector"
+        string shift "e.g., 9-5"
+    }
+    
+    STATION {
+        uuid station_id PK
+        string name
+        string process
+        bool active
+    }
+    JOB_CARD {
+        uuid id PK
+        string jobcard_no UK
+        date jobcard_date
+        string part_model
+        string part_composition
+        int quantity
+        string status "CREATED, IN PROGRESS, COMPLETED"
+        uuid created_by FK
+        timestamp created_at
+    }
+
+    QR_MASTER {
+        uuid id PK
+        string qr_id UK
+        uuid jobcard_id FK
+        string serial_no
+        string status "UNUSED, IN USE, COMPLETED, SCRAPPED"
+        timestamp created_at
+    }
+
+    PRODUCT {
+        uuid id PK
+        string qr_id FK "Unique Key"
+        string overall_status "WIP, COMPLETED, SCRAPPED"
+        timestamp created_at
+    }
+
+    %% N-Number Process Detail Tables
+    SCANNER_PROCESS_DETAIL {
+        uuid id PK
+        string qr_id FK
+        string process_name "e.g., Moulding, Polish"
+        uuid station_id FK
+        uuid scanner_id FK
+        uuid inspector_id FK "Nullable until inspected"
+        string inspection_status "PENDING, OK, REWORK, REJECTED"
+        string reject_reason
+        timestamp start_time
+        timestamp end_time
+    }
+
+    ASSEMBLY_PROCESS_DETAIL {
+        uuid id PK
+        string parent_qr_id FK
+        string process_name "e.g., Final Assembly"
+        uuid station_id FK
+        uuid linker_id FK
+        uuid inspector_id FK "Nullable until inspected"
+        string inspection_status "PENDING, OK, REWORK, REJECTED"
+        string reject_reason
+        timestamp start_time
+        timestamp end_time
+    }
+
+    %% Dynamic Component Interlinking
+    ASSEMBLY_MAPPING {
+        uuid id PK
+        uuid assembly_process_id FK
+        string child_qr_id FK "The scanned component"
+        string part_group "e.g., Shell, Visor, Belt"
+    }
+
+    %% Relationships
+    USER ||--o{ JOB_CARD : "creates"
+    JOB_CARD ||--|{ QR_MASTER : "generates QR"
+    QR_MASTER ||--o| PRODUCT : "initializes"
+    
+    %% Scanner Process Links
+    PRODUCT ||--o{ SCANNER_PROCESS_DETAIL : "undergoes"
+    %% Station Links
+    STATION ||--o{ SCANNER_PROCESS_DETAIL : "hosts"
+    STATION ||--o{ ASSEMBLY_PROCESS_DETAIL : "hosts"
+    USER ||--o{ ASSEMBLY_PROCESS_DETAIL : "links and inspects"
+    
+    %% Dynamic Mapping Links
+    ASSEMBLY_PROCESS_DETAIL ||--|{ ASSEMBLY_MAPPING : "contains"
+    QR_MASTER ||--o{ ASSEMBLY_MAPPING : "used as component"

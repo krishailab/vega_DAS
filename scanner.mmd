@@ -1,0 +1,55 @@
+graph TD
+    %% Roles
+    Scanner[Scanner / Linker]
+    Inspector[Inspector]
+
+    %% 1. Clock-in
+    subgraph Clock-In Phase
+        StartLogin(User Login) --> AssignStation[POST /users/assign-station]
+        AssignStation --> VerifyStation{Is Station Active?}
+        VerifyStation -- No --> Error1[Error: Station not active]
+        VerifyStation -- Yes --> CheckShift{Is Shift Active for Timestamp?}
+        CheckShift -- No --> Error2[Error: No active shift]
+        CheckShift -- Yes --> SaveProfile[Assign Station & Shift to Profile\nCalculate & Save shift_end_datetime]
+    end
+
+    %% 2. Scanning / Linking Phase
+    subgraph Processing Phase
+        SaveProfile --> ScanStart(Start Scan / Link Process)
+        ScanStart --> VerifyShiftEnded{Current Time > shift_end_datetime?}
+        VerifyShiftEnded -- Yes --> Error3[Error: Shift Ended. Clock-in again.]
+        VerifyShiftEnded -- No --> VerifyCompleted{Previously marked OKAY?}
+        
+        VerifyCompleted -- Yes --> Error4[Error: Part already completed this process]
+        VerifyCompleted -- No --> VerifyPending{Currently PENDING?}
+        
+        VerifyPending -- Yes --> Error5[Error: Part is currently pending inspection]
+        VerifyPending -- No --> VerifyRework{Previously REWORKED?}
+
+        VerifyRework -- Yes --> LogPending[Log Scan Record\nStatus = PENDING]
+        VerifyRework -- No --> LogOkay[Log Scan Record\nStatus = OKAY]
+    end
+
+    %% 3. Inspection Phase
+    subgraph Inspection Phase
+        LogOkay -. "Implicit Approval (No Action)" .-> ProceedNext(Move to Next Stage)
+        LogOkay -. "Inspector Finds Issue" .-> InspectStart
+        LogPending --> InspectStart(Inspector Scans QR\nPUT /scan/inspect)
+
+        InspectStart --> InspShiftCheck{Current Time > shift_end_datetime?}
+        InspShiftCheck -- Yes --> Error6[Error: Shift Ended. Clock-in again.]
+        InspShiftCheck -- No --> FindProcess[Fetch latest PENDING or OKAY process for QR]
+
+        FindProcess --> InspDecision{Inspector Decision}
+        
+        InspDecision -- "Mark OKAY" --> InspOkay[Update Status: OKAY]
+        InspOkay --> ProceedNext
+        
+        InspDecision -- "Mark REWORK" --> InspRework[Update Status: REWORKED]
+        InspRework -. "Physically returned to Scanner" .-> ScanStart
+        
+        InspDecision -- "Mark REJECTED" --> InspImage{Has Uploaded Image?}
+        InspImage -- No --> Error7[Error: Image Required]
+        InspImage -- Yes --> InspReject[Update Status: REJECTED\nUpdate Product: SCRAPPED]
+        InspReject --> EndScrap([Part Permanently Locked])
+    end

@@ -1,0 +1,5 @@
+Running current get_job_cards implementation...
+Retrieved 43 job cards.
+Total time taken: 249.9163 seconds
+Total database queries executed: 0
+Query types: Counter()

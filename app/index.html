@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machine Station QR - A4 White</title>
+    <style>
+        /* PDF and Print settings for A4 */
+        @page {
+            size: A4 portrait;
+            margin: 0;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #525659;
+            /* Gray background for web view so the A4 page stands out */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        /* A4 Page Container */
+        .page-container {
+            width: 210mm;
+            height: 297mm;
+            background-color: #ffffff;
+            /* Changed to White */
+            color: #000000;
+            /* Changed base text color to Black */
+            box-sizing: border-box;
+            padding: 15mm 20mm;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            /* Shadow for web view */
+        }
+
+        /* --- Header --- */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12mm;
+        }
+
+        .logo-left {
+            width: 90px;
+            height: auto;
+            border-radius: 12px;
+        }
+
+        .header-right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        .logos-top-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 5px;
+        }
+
+        .logos-top-right img {
+            height: 28px;
+            object-fit: contain;
+        }
+
+        .header-url {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: #000000;
+            /* Changed to Black */
+        }
+
+        /* --- Main Content (QR + Details) --- */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            width: 100%;
+            max-width: 165mm;
+            margin: 0 auto;
+            flex-grow: 1;
+        }
+
+        .qr-card {
+            background-color: #ffffff;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            padding: 5mm;
+            /* Reduced padding slightly since bg is white */
+            box-sizing: border-box;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 5mm;
+        }
+
+        .qr-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .info-box {
+            border: 1.5px solid #000000;
+            /* Changed border to Black */
+            padding: 10px 15px;
+            width: 90%;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .info-text {
+            font-size: 18px;
+            color: #000000;
+            /* Changed to Black */
+            margin: 0;
+            font-weight: bold;
+        }
+
+        /* --- Footer --- */
+        .footer {
+            margin-top: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            padding-bottom: 10mm;
+        }
+
+        .footer-logo {
+            height: 30px;
+            object-fit: contain;
+        }
+
+        .footer-text {
+            font-size: 12px;
+            font-style: italic;
+            font-weight: bold;
+            color: #333333;
+            /* Changed to Dark Gray/Black */
+        }
+
+        /* Hide body background and shadows when printing */
+        @media print {
+            body {
+                background-color: transparent;
+            }
+
+            .page-container {
+                box-shadow: none;
+                margin: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="page-container">
+        <header class="header">
+            <img class="logo-left" src="vegacentral.png" alt="Vega Central">
+
+            <div class="header-right">
+                <div class="logos-top-right">
+                    <img src="vega.png" alt="Vega">
+                    <img src="axor.png" alt="Axor">
+                </div>
+                <div class="header-url">central.vegaauto.in</div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="qr-card">
+                <img src="qr_code.png" alt="QR Code">
+            </div>
+
+            <div class="info-box">
+                <div class="info-text">Machine Code: MATT LACQUERING BOOTH 01</div>
+                <div class="info-text">Process: MATT LACQUERING</div>
+                <div class="info-text">QR ID: STN26AAAA0006</div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <img class="footer-logo" src="motocross.png" alt="Moto Cross">
+            <span class="footer-text">Designed & developed by NxtLab | www.nxtlab.in</span>
+        </footer>
+    </div>
+
+</body>
+
+</html>

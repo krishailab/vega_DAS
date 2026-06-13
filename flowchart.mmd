@@ -1,0 +1,125 @@
+graph TD
+    %% Main Admin Flow & Master
+    Start([Start]) --> SuperAdmin[Super Admin] --> PartDefining[[Part Defining]]
+    PartDefining --> AdminCreation[Admin Creation] --> AssignPart[Assign Part] --> PartAdmin["Part Admin(s)"]
+    PartAdmin --> Master
+
+    subgraph Master
+        master[Master] --> define_shift["Define Shift"]
+        master --> define_machine["Define Machines"]
+        master --> define_assemble["Define Assemble Line"]
+        master --> sub_user["Onboard Sub Users"]
+        
+        sub_user --> def_scanner["Role: Scanner"]
+        sub_user --> def_linker["Role: Linker"]
+        sub_user --> def_inspector["Role: Inspector"]
+    end
+
+    %% Job Card and QR
+    PartAdmin --> JobcardCreation["Job Card Creation"] --> ModelDetail["Model Details"] --> QRGen["QR Code Generation"] --> QR["Shared QR Code"]
+    
+    %% Main Connections
+    PartAdmin --> ScannerProcess1_sub
+    PartAdmin --> ScannerProcessN["Scanner Process 2 ... n"]
+    PartAdmin --> AssembleProcess1_sub
+    PartAdmin --> AssembleProcessN["Assemble Process 2 ... n"]
+
+    %% Detailed Scanner Process 1 
+    subgraph ScannerProcess1_sub ["Scanner Process 1 (Detailed)"]
+        P1_Scanner["Scanner (Sub-user)"] -- "1. Scans once per shift" --> P1_MachineQR["Machine QR"]
+        P1_MachineQR --> P1_ProfileMap["Maps Machine & Shift to Profile"]
+        
+        P1_ProfileMap -- "2. Starts working" --> P1_ScanPart["Scan Part QRs (Loop)"]
+        P1_ScanPart -. "Saves User, Shift & Machine data" .-> QR
+        
+        P1_ScanPart --> P1_Inspector["Inspector (Sub-user)"] --> P1_InspectorCheck{"Inspector Checks Part"}
+        
+        P1_InspectorCheck -- "Initial OK (No Scan)" --> P1_Completed["Done (Scanner Process 1)"]
+        P1_InspectorCheck -- "Found Issue (Scans QR)" --> P1_MarkStatus{"Mark QR Status"}
+        P1_InspectorCheck -- "Reviewing Rework (Scans QR)" --> P1_MarkStatus
+        
+        P1_MarkStatus -- "Reject" --> P1_Reject["Update QR: Rejected"] -.-> QR
+        P1_MarkStatus -- "Rework" --> P1_Rework["Update QR: Rework"] -.-> QR
+        P1_MarkStatus -- "OK (Rework Fixed)" --> P1_ReworkOK["Update QR: OK"] -.-> QR
+        
+        P1_Rework --> P1_ScanPart
+        P1_ReworkOK --> P1_Completed
+    end
+
+    %% Detailed Assembly Process 1 
+    subgraph AssembleProcess1_sub ["Assembly Process 1 (Detailed)"]
+        A_Linker["Linker (Sub-user)"] -- "1. Scans once per shift" --> A_AssembleQR["Assemble Line QR"]
+        A_AssembleQR --> A_ProfileMap["Maps Assemble Line & Shift to Profile"]
+        
+        A_ProfileMap -- "2. Starts working" --> A_ManualInput["Manual Input: Number of Parts (e.g., n=6)"]
+        A_ManualInput --> A_ScanParts["Scan 'n' Distinct Part QRs"]
+        
+        A_ScanParts --> A_Validation{"Validation: Are parts distinct by group?"}
+        A_Validation -- "No (Invalid / Duplicate)" --> A_ScanParts
+        A_Validation -- "Yes (Valid)" --> A_Interlink["Interlink Parts (Assembly Complete)"]
+        A_Interlink -. "Saves Interlink Data" .-> QR
+        
+        A_Interlink --> A_Inspector["Inspector (Sub-user)"] --> A_InspectorCheck{"Inspector Checks Assembly"}
+        
+        A_InspectorCheck -- "Initial OK (No Scan)" --> A_Completed["Done (Assembly 1)"]
+        A_InspectorCheck -- "Found Issue (Scans QR)" --> A_MarkStatus{"Mark QR Status"}
+        A_InspectorCheck -- "Reviewing Rework (Scans QR)" --> A_MarkStatus
+        
+        A_MarkStatus -- "Reject" --> A_Reject["Update QR: Rejected"] -.-> QR
+        A_MarkStatus -- "Rework" --> A_Rework["Update QR: Rework"] -.-> QR
+        A_MarkStatus -- "OK (Rework Fixed)" --> A_ReworkOK["Update QR: OK"] -.-> QR
+        
+        A_Rework --> A_ManualInput
+        A_ReworkOK --> A_Completed
+    end
+
+    %% ==========================================
+    %% MAPPINGS FROM MASTER TO FLOOR EXECUTION
+    %% ==========================================
+
+    %% 1. Mapping Roles (Dashed Lines)
+    def_scanner -. "Assigns to" .-> P1_Scanner
+    def_scanner -. "Assigns to" .-> ScannerProcessN
+    
+    def_linker -. "Assigns to" .-> A_Linker
+    def_linker -. "Assigns to" .-> AssembleProcessN
+    
+    def_inspector -. "Assigns to" .-> P1_Inspector
+    def_inspector -. "Assigns to" .-> A_Inspector
+    def_inspector -. "Assigns to" .-> ScannerProcessN
+    def_inspector -. "Assigns to" .-> AssembleProcessN
+
+    %% 2. Mapping Assets (Machine & Assemble Line)
+    define_machine -. "Configures" .-> P1_MachineQR
+    define_machine -. "Configures" .-> ScannerProcessN
+
+    define_assemble -. "Configures" .-> A_AssembleQR
+    define_assemble -. "Configures" .-> AssembleProcessN
+
+    %% 3. Mapping Shifts
+    define_shift -. "Applies to" .-> P1_ProfileMap
+    define_shift -. "Applies to" .-> A_ProfileMap
+    define_shift -. "Applies to" .-> ScannerProcessN
+    define_shift -. "Applies to" .-> AssembleProcessN
+
+    %% ==========================================
+    %% DYNAMIC ROUTING LOGIC
+    %% ==========================================
+
+    %% Routing for Scanner Processes
+    P1_Completed --> RouteDecision{Next Stage?}
+    RouteDecision -- "Next Scanner" --> ScannerProcessN
+    RouteDecision -- "To Assembly" --> AssembleProcess1_sub
+    
+    ScannerProcessN --> RouteDecisionN{Next Stage?}
+    RouteDecisionN -- "Next Scanner" --> ScannerProcessN
+    RouteDecisionN -- "To Assembly" --> AssembleProcess1_sub
+
+    %% Routing for Assembly Processes
+    A_Completed --> RouteDecisionA{Next Stage?}
+    RouteDecisionA -- "Next Assembly" --> AssembleProcessN
+    RouteDecisionA -- "Finish" --> FinalComplete([Final Completion])
+
+    AssembleProcessN --> RouteDecisionAN{Next Stage?}
+    RouteDecisionAN -- "Next Assembly" --> AssembleProcessN
+    RouteDecisionAN -- "Finish" --> FinalComplete
