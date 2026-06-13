@@ -57,4 +57,4 @@ jobs:
             sudo systemctl is-active vega_traceability
             
             # Verify API response
-            curl http://127.0.0.1:8003/
+            curl http://127.0.0.1:8002/

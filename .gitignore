@@ -28,7 +28,6 @@ firebase.json
 env
 # Databases
 *.sqlite3
-.env
 # Unit test / coverage reports
 htmlcov/
 .tox/
