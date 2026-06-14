@@ -166,7 +166,6 @@ class B2BInwardOperations:
         brand_id: Optional[str] = None,
         model_id: Optional[str] = None,
         submodel_id: Optional[str] = None,
-        # Variant-level filters
         color: Optional[str] = None,
         size: Optional[int] = None,
         size_name: Optional[str] = None,
