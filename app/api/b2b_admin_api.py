@@ -423,85 +423,61 @@ class B2BInwardOperations:
 
     @staticmethod
     def get_filter_options() -> dict:
-        inwards = list(b2b_inward_products_collection.find({}, {"variant_id": 1, "_id": 0}))
-        variant_ids = list(set(inw["variant_id"] for inw in inwards if inw.get("variant_id")))
+        variant_ids = b2b_inward_products_collection.distinct("variant_id")
         
         # Only prefetch variants that have active inwards
-        variants_cursor = product_variants_collection.find(
+        variants = list(product_variants_collection.find(
             {"variant_id": {"$in": variant_ids}},
             {"variant_id": 1, "submodel_id": 1, "color": 1, "size": 1, "size_name": 1, "_id": 0}
-        )
-        variants_by_id = {v["variant_id"]: v for v in variants_cursor}
+        ))
         
-        submodel_ids = list(set(v["submodel_id"] for v in variants_by_id.values() if v.get("submodel_id")))
+        submodel_ids = list({v["submodel_id"] for v in variants if v.get("submodel_id")})
         submodels_cursor = product_submodels_collection.find(
             {"submodel_id": {"$in": submodel_ids}},
-            {"submodel_id": 1, "name": 1, "model_id": 1, "color": 1, "finish": 1, "_id": 0}
-        )
+            {"submodel_id": 1, "model_id": 1, "_id": 0}
+        ) if submodel_ids else []
         submodels_by_id = {sm["submodel_id"]: sm for sm in submodels_cursor}
         
-        model_ids = list(set(sm["model_id"] for sm in submodels_by_id.values() if sm.get("model_id")))
+        model_ids = list({sm["model_id"] for sm in submodels_by_id.values() if sm.get("model_id")})
         models_cursor = product_models_collection.find(
             {"model_id": {"$in": model_ids}},
-            {"model_id": 1, "name": 1, "brand_id": 1, "category_id": 1, "subcategory_id": 1, "_id": 0}
-        )
+            {"model_id": 1, "brand_id": 1, "category_id": 1, "subcategory_id": 1, "_id": 0}
+        ) if model_ids else []
         models_by_id = {m["model_id"]: m for m in models_cursor}
         
-        brand_ids = list(set(m["brand_id"] for m in models_by_id.values() if m.get("brand_id")))
+        brand_ids = list({m["brand_id"] for m in models_by_id.values() if m.get("brand_id")})
         brands_cursor = product_brands_collection.find(
             {"brand_id": {"$in": brand_ids}},
             {"brand_id": 1, "name": 1, "_id": 0}
-        )
+        ) if brand_ids else []
         brands_by_id = {b["brand_id"]: b for b in brands_cursor}
         
-        category_ids = list(set(m["category_id"] for m in models_by_id.values() if m.get("category_id")))
+        category_ids = list({m["category_id"] for m in models_by_id.values() if m.get("category_id")})
         categories_cursor = product_categories_collection.find(
             {"category_id": {"$in": category_ids}},
             {"category_id": 1, "name": 1, "_id": 0}
-        )
+        ) if category_ids else []
         categories_by_id = {c["category_id"]: c for c in categories_cursor}
         
-        subcategory_ids = list(set(m["subcategory_id"] for m in models_by_id.values() if m.get("subcategory_id")))
+        subcategory_ids = list({m["subcategory_id"] for m in models_by_id.values() if m.get("subcategory_id")})
         subcategories_cursor = product_subcategories_collection.find(
             {"subcategory_id": {"$in": subcategory_ids}},
             {"subcategory_id": 1, "name": 1, "category_id": 1, "_id": 0}
-        )
+        ) if subcategory_ids else []
         subcategories_by_id = {s["subcategory_id"]: s for s in subcategories_cursor}
 
         used_categories = {}
         used_subcategories = {}
         used_brands = {}
-        used_models = {}
-        used_submodels = {}
         used_colors = set()
         used_sizes = set()
         used_size_names = set()
 
-        for inw in inwards:
-            variant_id = inw.get("variant_id")
-            variant = variants_by_id.get(variant_id)
-            if not variant:
-                continue
-
+        for variant in variants:
             submodel = submodels_by_id.get(variant.get("submodel_id"))
             model = models_by_id.get(submodel.get("model_id")) if submodel else None
 
-            if submodel:
-                used_submodels[submodel["submodel_id"]] = {
-                    "submodel_id": submodel["submodel_id"],
-                    "name": submodel["name"],
-                    "model_id": submodel["model_id"]
-                }
-
             if model:
-                used_models[model["model_id"]] = {
-                    "model_id": model["model_id"],
-                    "name": model["name"],
-                    "brand_id": model["brand_id"],
-                    "category_id": model["category_id"],
-                    "subcategory_id": model["subcategory_id"]
-                }
-                
                 brand = brands_by_id.get(model.get("brand_id"))
                 if brand:
                     used_brands[brand["brand_id"]] = {
