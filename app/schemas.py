@@ -769,7 +769,6 @@ class ProductSubModelCreate(BaseModel):
     carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
     product_images: list[str] = []
-    color: Optional[str] = None
     finish: Optional[str] = None
     certification: list[str] = []  # List of certification file URLs
     visor_type: Optional[str] = None
@@ -794,7 +793,6 @@ class ProductSubModelUpdate(BaseModel):
     carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
     product_images: Optional[list[str]] = None
-    color: Optional[str] = None
     finish: Optional[str] = None
     certification: Optional[list[str]] = None
     visor_type: Optional[str] = None

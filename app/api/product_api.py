@@ -400,7 +400,6 @@ class ProductSubModelOperations:
             "carton_box_size": submodel.carton_box_size,
             "carton_barcode": submodel.carton_barcode,
             "product_images": product_image_urls,
-            "color": submodel.color,
             "finish": submodel.finish,
             "certification": cert_urls,
             "visor_type": submodel.visor_type,
@@ -420,7 +419,7 @@ class ProductSubModelOperations:
 
         # Check SKU uniqueness across all submodels before inserting anything
         for item in parsed_variants:
-            size_name, size, sku_no = item
+            sku_no = item[2]
             existing_var = product_variants_collection.find_one({"sku_no": sku_no})
             if existing_var:
                 raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists")
@@ -430,7 +429,12 @@ class ProductSubModelOperations:
 
         inserted_variants = []
         for item in parsed_variants:
-            size_name, size, sku_no = item
+            size_name = item[0]
+            size = item[1]
+            sku_no = item[2]
+            variant_color = item[3] if len(item) > 3 and item[3] is not None else None
+            variant_images = item[4] if len(item) > 4 and item[4] is not None else product_image_urls
+            
             variant_id = utils.generate_custom_id("PVAR", product_variants_collection, "variant_id")
             variant_dict = {
                 "variant_id": variant_id,
@@ -446,8 +450,8 @@ class ProductSubModelOperations:
                 "long_description": submodel.long_description,
                 "carton_box_size": submodel.carton_box_size,
                 "carton_barcode": submodel.carton_barcode,
-                "product_images": product_image_urls,
-                "color": submodel.color,
+                "product_images": variant_images,
+                "color": variant_color,
                 "finish": submodel.finish,
                 "certification": cert_urls,
                 "visor_type": submodel.visor_type,
@@ -555,7 +559,7 @@ class ProductSubModelOperations:
             update_data["is_active"] = submodel.is_active
 
         for field in ["packaging_details", "box_and_carton_dimensions", "box_weight", "box_dimension", "carton_weight", "carton_dimension", "carton_numbers",
-                      "gs1_barcode", "short_description", "long_description", "carton_box_size", "carton_barcode", "color", "finish", 
+                      "gs1_barcode", "short_description", "long_description", "carton_box_size", "carton_barcode", "finish", 
                       "visor_type", "spoiler", "chinstrap_lock", "pinlock", "mrp"]:
             val = getattr(submodel, field, None)
             if val is not None:
@@ -610,7 +614,7 @@ class ProductSubModelOperations:
         if parsed_variants is not None:
             # Check SKU uniqueness across other submodels
             for item in parsed_variants:
-                size_name, size, sku_no = item
+                sku_no = item[2]
                 existing_var = product_variants_collection.find_one({"sku_no": sku_no})
                 if existing_var and existing_var["submodel_id"] != submodel_id:
                     raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists in another submodel")
@@ -624,7 +628,12 @@ class ProductSubModelOperations:
 
             # Upsert variants
             for item in parsed_variants:
-                size_name, size, sku_no = item
+                size_name = item[0]
+                size = item[1]
+                sku_no = item[2]
+                variant_color = item[3] if len(item) > 3 and item[3] is not None else None
+                variant_images = item[4] if len(item) > 4 and item[4] is not None else updated_submodel.get("product_images", [])
+                
                 existing_var = product_variants_collection.find_one({"sku_no": sku_no, "submodel_id": submodel_id})
                 if existing_var:
                     product_variants_collection.update_one(
@@ -637,8 +646,8 @@ class ProductSubModelOperations:
                             "long_description": updated_submodel.get("long_description"),
                             "carton_box_size": updated_submodel.get("carton_box_size"),
                             "carton_barcode": updated_submodel.get("carton_barcode"),
-                            "product_images": updated_submodel.get("product_images", []),
-                            "color": updated_submodel.get("color"),
+                            "product_images": variant_images,
+                            "color": variant_color,
                             "finish": updated_submodel.get("finish"),
                             "certification": updated_submodel.get("certification", []),
                             "visor_type": updated_submodel.get("visor_type"),
@@ -662,8 +671,8 @@ class ProductSubModelOperations:
                         "long_description": updated_submodel.get("long_description"),
                         "carton_box_size": updated_submodel.get("carton_box_size"),
                         "carton_barcode": updated_submodel.get("carton_barcode"),
-                        "product_images": updated_submodel.get("product_images", []),
-                        "color": updated_submodel.get("color"),
+                        "product_images": variant_images,
+                        "color": variant_color,
                         "finish": updated_submodel.get("finish"),
                         "certification": updated_submodel.get("certification", []),
                         "visor_type": updated_submodel.get("visor_type"),
@@ -686,7 +695,6 @@ class ProductSubModelOperations:
                     "carton_box_size": updated_submodel.get("carton_box_size"),
                     "carton_barcode": updated_submodel.get("carton_barcode"),
                     "product_images": updated_submodel.get("product_images", []),
-                    "color": updated_submodel.get("color"),
                     "finish": updated_submodel.get("finish"),
                     "certification": updated_submodel.get("certification", []),
                     "visor_type": updated_submodel.get("visor_type"),
@@ -1307,7 +1315,6 @@ def create_product_submodel(
     long_description: Optional[str] = Form(None),
     carton_box_size: Optional[int] = Form(None),
     carton_barcode: Optional[str] = Form(None),
-    color: Optional[str] = Form(None),
     finish: Optional[str] = Form(None),
     visor_type: Optional[str] = Form(None),
     spoiler: Optional[str] = Form(None),
@@ -1387,8 +1394,8 @@ def create_product_submodel(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid format for variants. Must be a JSON array of arrays like [['s', 80, 'SKU-567']]")
         
-        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and len(v) == 3 for v in parsed_variants):
-            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3: [size_name, size, sku_no]")
+        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and 3 <= len(v) <= 5 for v in parsed_variants):
+            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3 to 5: [size_name, size, sku_no, color (optional), product_images (optional)]")
 
     submodel_schema = schemas.ProductSubModelCreate(
         name=name,
@@ -1410,7 +1417,6 @@ def create_product_submodel(
         carton_box_size=carton_box_size,
         carton_barcode=carton_barcode,
         product_images=[],
-        color=color,
         finish=finish,
         certification=[],
         visor_type=visor_type,
@@ -1451,7 +1457,6 @@ def update_product_submodel(
     long_description: Optional[str] = Form(None),
     carton_box_size: Optional[int] = Form(None),
     carton_barcode: Optional[str] = Form(None),
-    color: Optional[str] = Form(None),
     finish: Optional[str] = Form(None),
     visor_type: Optional[str] = Form(None),
     spoiler: Optional[str] = Form(None),
@@ -1534,8 +1539,8 @@ def update_product_submodel(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid format for variants. Must be a JSON array of arrays like [['s', 80, 'SKU-567']]")
         
-        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and len(v) == 3 for v in parsed_variants):
-            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3: [size_name, size, sku_no]")
+        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and 3 <= len(v) <= 5 for v in parsed_variants):
+            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3 to 5: [size_name, size, sku_no, color (optional), product_images (optional)]")
 
     submodel_schema = schemas.ProductSubModelUpdate(
         image=None,
@@ -1555,7 +1560,6 @@ def update_product_submodel(
         carton_box_size=carton_box_size,
         carton_barcode=carton_barcode,
         product_images=None,
-        color=color,
         finish=finish,
         certification=None,
         visor_type=visor_type,
