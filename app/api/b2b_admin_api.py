@@ -365,8 +365,6 @@ class B2BInwardOperations:
         for v in variants_cursor:
             v_id = v["variant_id"]
             b2b_inw = b2b_inward_products_collection.find_one({"variant_id": v_id})
-            
-            # Skip if the variant is not inwarded in B2B catalog
             if not b2b_inw:
                 continue
                 
@@ -509,7 +507,7 @@ class B2BInwardOperations:
 
                     color = variant.get("color")
                     if color:
-                        used_colors.add(color.strip().upper())
+                        used_colors.add(color)
 
                     size = variant.get("size")
                     if size is not None:
@@ -517,7 +515,7 @@ class B2BInwardOperations:
 
                     size_name = variant.get("size_name")
                     if size_name:
-                        used_size_names.add(size_name.strip().upper())
+                        used_size_names.add(size_name)
 
         return {
             "categories": sorted(list(used_categories.values()), key=lambda x: x["name"]),
