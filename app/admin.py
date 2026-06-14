@@ -939,13 +939,10 @@ admin.add_view(
             StringField("model_id", label="Model ID", required=True),
             StringField("image", label="Submodel Image"),
             BooleanField("is_active", label="Is Active"),
-            TextAreaField("packaging_details", label="Packaging Details"),
-            TextAreaField("box_and_carton_dimensions", label="Box and Carton Dimensions"),
             FloatField("box_weight", label="Box Weight"),
             StringField("box_dimension", label="Box Dimension"),
             FloatField("carton_weight", label="Carton Weight"),
             StringField("carton_dimension", label="Carton Dimension"),
-            StringField("carton_numbers", label="Carton Numbers"),
             StringField("created_by", label="Created By"),
             DateTimeField("created_at", label="Created At"),
         ]

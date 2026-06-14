@@ -755,13 +755,10 @@ class ProductSubModelCreate(BaseModel):
     model_id: str
     image: Optional[str] = None
     is_active: bool = True
-    packaging_details: Optional[str] = None
-    box_and_carton_dimensions: Optional[str] = None
     box_weight: Optional[float] = None
     box_dimension: Optional[str] = None
     carton_weight: Optional[float] = None
     carton_dimension: Optional[str] = None
-    carton_numbers: Optional[str] = None
     # Variant fields stored on submodel
     gs1_barcode: Optional[str] = None
     short_description: Optional[str] = None
@@ -780,13 +777,10 @@ class ProductSubModelCreate(BaseModel):
 class ProductSubModelUpdate(BaseModel):
     image: Optional[str] = None
     is_active: Optional[bool] = None
-    packaging_details: Optional[str] = None
-    box_and_carton_dimensions: Optional[str] = None
     box_weight: Optional[float] = None
     box_dimension: Optional[str] = None
     carton_weight: Optional[float] = None
     carton_dimension: Optional[str] = None
-    carton_numbers: Optional[str] = None
     gs1_barcode: Optional[str] = None
     short_description: Optional[str] = None
     long_description: Optional[str] = None

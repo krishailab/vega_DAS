@@ -617,9 +617,6 @@ class JobCardOperations:
                 card.setdefault("box_dimension", submodel_doc.get("box_dimension"))
                 card.setdefault("carton_weight", submodel_doc.get("carton_weight"))
                 card.setdefault("carton_dimension", submodel_doc.get("carton_dimension"))
-                card.setdefault("packaging_details", submodel_doc.get("packaging_details"))
-                card.setdefault("box_and_carton_dimensions", submodel_doc.get("box_and_carton_dimensions"))
-                card.setdefault("carton_numbers", submodel_doc.get("carton_numbers"))
                 model_id = submodel_doc.get("model_id")
                 if model_id:
                     card.setdefault("model_id", model_id)
@@ -728,8 +725,7 @@ class JobCardOperations:
         # Enrich variant fields with submodel fallbacks and submodel fields
         submodel_fields = [
             "name", "image", "box_weight", "box_dimension",
-            "carton_weight", "carton_dimension", "packaging_details",
-            "box_and_carton_dimensions", "carton_numbers",
+            "carton_weight", "carton_dimension",
         ]
         card_submodel = {}
         for c in cards:
