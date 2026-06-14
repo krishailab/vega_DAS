@@ -385,13 +385,10 @@ class ProductSubModelOperations:
             "model_id": submodel.model_id,
             "image": image_url,
             "is_active": submodel.is_active,
-            "packaging_details": submodel.packaging_details,
-            "box_and_carton_dimensions": submodel.box_and_carton_dimensions,
             "box_weight": submodel.box_weight,
             "box_dimension": submodel.box_dimension,
             "carton_weight": submodel.carton_weight,
             "carton_dimension": submodel.carton_dimension,
-            "carton_numbers": submodel.carton_numbers,
             
             # Variant fields stored on submodel
             "gs1_barcode": submodel.gs1_barcode,
@@ -569,7 +566,7 @@ class ProductSubModelOperations:
         if submodel.is_active is not None:
             update_data["is_active"] = submodel.is_active
 
-        for field in ["packaging_details", "box_and_carton_dimensions", "box_weight", "box_dimension", "carton_weight", "carton_dimension", "carton_numbers",
+        for field in ["box_weight", "box_dimension", "carton_weight", "carton_dimension",
                       "gs1_barcode", "short_description", "long_description", "carton_box_size", "carton_barcode", "finish", 
                       "visor_type", "spoiler", "chinstrap_lock", "pinlock", "mrp"]:
             val = getattr(submodel, field, None)
@@ -804,13 +801,10 @@ class ProductVariantOperations:
         variant_dict["submodel_status"] = submodel.get("is_active") if submodel else None
         variant_dict["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        variant_dict["packaging_details"] = submodel.get("packaging_details") if submodel else None
-        variant_dict["box_and_carton_dimensions"] = submodel.get("box_and_carton_dimensions") if submodel else None
         variant_dict["box_weight"] = submodel.get("box_weight") if submodel else None
         variant_dict["box_dimension"] = submodel.get("box_dimension") if submodel else None
         variant_dict["carton_weight"] = submodel.get("carton_weight") if submodel else None
         variant_dict["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
-        variant_dict["carton_numbers"] = submodel.get("carton_numbers") if submodel else None
 
         variant_dict["model_id"] = model.get("model_id") if model else None
         variant_dict["model_name"] = model.get("name") if model else None
@@ -871,13 +865,10 @@ class ProductVariantOperations:
             v["submodel_status"] = submodel.get("is_active") if submodel else None
             v["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-            v["packaging_details"] = submodel.get("packaging_details") if submodel else None
-            v["box_and_carton_dimensions"] = submodel.get("box_and_carton_dimensions") if submodel else None
             v["box_weight"] = submodel.get("box_weight") if submodel else None
             v["box_dimension"] = submodel.get("box_dimension") if submodel else None
             v["carton_weight"] = submodel.get("carton_weight") if submodel else None
             v["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
-            v["carton_numbers"] = submodel.get("carton_numbers") if submodel else None
 
             v["model_id"] = model.get("model_id") if model else None
             v["model_name"] = model.get("name") if model else None
@@ -968,13 +959,10 @@ class ProductVariantOperations:
         updated["submodel_status"] = submodel.get("is_active") if submodel else None
         updated["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        updated["packaging_details"] = submodel.get("packaging_details") if submodel else None
-        updated["box_and_carton_dimensions"] = submodel.get("box_and_carton_dimensions") if submodel else None
         updated["box_weight"] = submodel.get("box_weight") if submodel else None
         updated["box_dimension"] = submodel.get("box_dimension") if submodel else None
         updated["carton_weight"] = submodel.get("carton_weight") if submodel else None
         updated["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
-        updated["carton_numbers"] = submodel.get("carton_numbers") if submodel else None
 
         updated["model_id"] = model.get("model_id") if model else None
         updated["model_name"] = model.get("name") if model else None
@@ -1104,13 +1092,10 @@ class ProductVariantOperations:
             v["submodel_status"] = submodel.get("is_active") if submodel else None
             v["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-            v["packaging_details"] = submodel.get("packaging_details") if submodel else None
-            v["box_and_carton_dimensions"] = submodel.get("box_and_carton_dimensions") if submodel else None
             v["box_weight"] = submodel.get("box_weight") if submodel else None
             v["box_dimension"] = submodel.get("box_dimension") if submodel else None
             v["carton_weight"] = submodel.get("carton_weight") if submodel else None
             v["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
-            v["carton_numbers"] = submodel.get("carton_numbers") if submodel else None
 
             v["model_id"] = model.get("model_id") if model else None
             v["model_name"] = model.get("name") if model else None
@@ -1153,13 +1138,10 @@ class ProductVariantOperations:
         variant["submodel_status"] = submodel.get("is_active") if submodel else None
         variant["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        variant["packaging_details"] = submodel.get("packaging_details") if submodel else None
-        variant["box_and_carton_dimensions"] = submodel.get("box_and_carton_dimensions") if submodel else None
         variant["box_weight"] = submodel.get("box_weight") if submodel else None
         variant["box_dimension"] = submodel.get("box_dimension") if submodel else None
         variant["carton_weight"] = submodel.get("carton_weight") if submodel else None
         variant["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
-        variant["carton_numbers"] = submodel.get("carton_numbers") if submodel else None
 
         variant["model_id"] = model.get("model_id") if model else None
         variant["model_name"] = model.get("name") if model else None
@@ -1312,13 +1294,10 @@ def create_product_submodel(
     model_id: str = Form(...),
     image: Optional[UploadFile] = File(None),
     is_active: bool = Form(True),
-    packaging_details: Optional[str] = Form(None),
-    box_and_carton_dimensions: Optional[str] = Form(None),
     box_weight: Optional[float] = Form(None),
     box_dimension: Optional[str] = Form(None),
     carton_weight: Optional[float] = Form(None),
     carton_dimension: Optional[str] = Form(None),
-    carton_numbers: Optional[str] = Form(None),
     
     # Variant fields at submodel level
     gs1_barcode: Optional[str] = Form(None),
@@ -1413,13 +1392,10 @@ def create_product_submodel(
         model_id=model_id,
         image=None,
         is_active=is_active,
-        packaging_details=packaging_details,
-        box_and_carton_dimensions=box_and_carton_dimensions,
         box_weight=box_weight,
         box_dimension=box_dimension,
         carton_weight=carton_weight,
         carton_dimension=carton_dimension,
-        carton_numbers=carton_numbers,
         gs1_barcode=gs1_barcode,
         short_description=short_description,
         long_description=long_description,
@@ -1452,13 +1428,10 @@ def update_product_submodel(
     name: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     is_active: Optional[bool] = Form(None),
-    packaging_details: Optional[str] = Form(None),
-    box_and_carton_dimensions: Optional[str] = Form(None),
     box_weight: Optional[float] = Form(None),
     box_dimension: Optional[str] = Form(None),
     carton_weight: Optional[float] = Form(None),
     carton_dimension: Optional[str] = Form(None),
-    carton_numbers: Optional[str] = Form(None),
     
     # New variant fields at submodel level
     gs1_barcode: Optional[str] = Form(None),
@@ -1554,13 +1527,10 @@ def update_product_submodel(
     submodel_schema = schemas.ProductSubModelUpdate(
         image=None,
         is_active=is_active,
-        packaging_details=packaging_details,
-        box_and_carton_dimensions=box_and_carton_dimensions,
         box_weight=box_weight,
         box_dimension=box_dimension,
         carton_weight=carton_weight,
         carton_dimension=carton_dimension,
-        carton_numbers=carton_numbers,
         
         # New variant fields stored on submodel
         gs1_barcode=gs1_barcode,
