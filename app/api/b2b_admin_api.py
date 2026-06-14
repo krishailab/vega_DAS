@@ -422,7 +422,7 @@ class B2BInwardOperations:
         return {"status": "success", "message": f"Inwarded product '{inward_id}' deleted successfully"}
 
     @staticmethod
-    def get_filter_options() -> dict:
+    def get_filter_options(category_id: Optional[str] = None, subcategory_id: Optional[str] = None) -> dict:
         variant_ids = b2b_inward_products_collection.distinct("variant_id")
         
         # Only prefetch variants that have active inwards
@@ -478,13 +478,6 @@ class B2BInwardOperations:
             model = models_by_id.get(submodel.get("model_id")) if submodel else None
 
             if model:
-                brand = brands_by_id.get(model.get("brand_id"))
-                if brand:
-                    used_brands[brand["brand_id"]] = {
-                        "brand_id": brand["brand_id"],
-                        "name": brand["name"]
-                    }
-
                 category = categories_by_id.get(model.get("category_id"))
                 if category:
                     used_categories[category["category_id"]] = {
@@ -494,23 +487,37 @@ class B2BInwardOperations:
 
                 subcategory = subcategories_by_id.get(model.get("subcategory_id"))
                 if subcategory:
-                    used_subcategories[subcategory["subcategory_id"]] = {
-                        "subcategory_id": subcategory["subcategory_id"],
-                        "name": subcategory["name"],
-                        "category_id": subcategory["category_id"]
-                    }
+                    # Filter subcategories list based on category_id parameter if provided
+                    if not category_id or subcategory.get("category_id") == category_id:
+                        used_subcategories[subcategory["subcategory_id"]] = {
+                            "subcategory_id": subcategory["subcategory_id"],
+                            "name": subcategory["name"],
+                            "category_id": subcategory["category_id"]
+                        }
 
-            color = variant.get("color")
-            if color:
-                used_colors.add(color)
+                # Filter other options (brands, colors, sizes, size_names) based on category_id and subcategory_id parameters
+                matches_category = (not category_id or model.get("category_id") == category_id)
+                matches_subcategory = (not subcategory_id or model.get("subcategory_id") == subcategory_id)
 
-            size = variant.get("size")
-            if size is not None:
-                used_sizes.add(size)
+                if matches_category and matches_subcategory:
+                    brand = brands_by_id.get(model.get("brand_id"))
+                    if brand:
+                        used_brands[brand["brand_id"]] = {
+                            "brand_id": brand["brand_id"],
+                            "name": brand["name"]
+                        }
 
-            size_name = variant.get("size_name")
-            if size_name:
-                used_size_names.add(size_name)
+                    color = variant.get("color")
+                    if color:
+                        used_colors.add(color)
+
+                    size = variant.get("size")
+                    if size is not None:
+                        used_sizes.add(size)
+
+                    size_name = variant.get("size_name")
+                    if size_name:
+                        used_size_names.add(size_name)
 
         return {
             "categories": sorted(list(used_categories.values()), key=lambda x: x["name"]),
@@ -750,13 +757,16 @@ def get_inward_product_cards(
     )
 
 @router.get("/inwards/filters", response_model=dict)
-def get_inward_filters() -> dict:
+def get_inward_filters(
+    category_id: Optional[str] = Query(None),
+    subcategory_id: Optional[str] = Query(None)
+) -> dict:
     """Return distinct filter data options present in the B2B inwarded products database.
     
     This includes unique categories, subcategories, brands, models, submodels,
     colors, sizes, and size names that have active/linked inwarded products.
     """
-    return B2BInwardOperations.get_filter_options()
+    return B2BInwardOperations.get_filter_options(category_id=category_id, subcategory_id=subcategory_id)
 
 @router.get("/inwards/{inward_id}", response_model=schemas.B2BInwardDetailResponse)
 def get_inward_product_detail(
