@@ -509,7 +509,7 @@ class B2BInwardOperations:
 
                     color = variant.get("color")
                     if color:
-                        used_colors.add(color)
+                        used_colors.add(color.strip().upper())
 
                     size = variant.get("size")
                     if size is not None:
@@ -517,7 +517,7 @@ class B2BInwardOperations:
 
                     size_name = variant.get("size_name")
                     if size_name:
-                        used_size_names.add(size_name)
+                        used_size_names.add(size_name.strip().upper())
 
         return {
             "categories": sorted(list(used_categories.values()), key=lambda x: x["name"]),
