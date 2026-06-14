@@ -486,6 +486,10 @@ class ProductSubModelOperations:
                 {"model_name": {"$regex": search, "$options": "i"}},
                 {"brand_name": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_submodels_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
+        
         skip = (page - 1) * limit
         submodels = list(product_submodels_collection.find(query).skip(skip).limit(limit))
         
@@ -535,7 +539,14 @@ class ProductSubModelOperations:
             s["brand_image"] = brand.get("logo_url") if brand else None
             
             s["variants"] = variants_by_submodel.get(s["submodel_id"], [])
-        return submodels
+            
+        return {
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "pages": total_pages,
+            "submodels": submodels
+        }
 
     @staticmethod
     def update_submodel(
@@ -1429,7 +1440,7 @@ def create_product_submodel(
         submodel_schema, image, valid_images, valid_certs, parsed_variants, current_user
     )
 
-@router.get("/submodels/", response_model=List[dict])
+@router.get("/submodels/", response_model=dict)
 def get_product_submodels(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

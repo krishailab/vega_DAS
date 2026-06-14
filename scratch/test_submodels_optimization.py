@@ -10,10 +10,18 @@ def test_get_submodels():
     print("Testing get_submodels execution and payload structure...")
     
     start_time = time.perf_counter()
-    submodels = ProductSubModelOperations.get_submodels(page=1, limit=50)
+    res = ProductSubModelOperations.get_submodels(page=1, limit=50)
     duration = time.perf_counter() - start_time
     
-    print(f"Retrieved {len(submodels)} submodels in {duration:.4f} seconds.")
+    # Assert pagination keys
+    assert "total" in res, "Expected 'total' in response"
+    assert "page" in res, "Expected 'page' in response"
+    assert "limit" in res, "Expected 'limit' in response"
+    assert "pages" in res, "Expected 'pages' in response"
+    assert "submodels" in res, "Expected 'submodels' in response"
+    
+    submodels = res["submodels"]
+    print(f"Retrieved {len(submodels)} submodels in {duration:.4f} seconds (Total in DB: {res['total']}).")
     
     if not submodels:
         print("No submodels found. Please ensure there is some data in the database.")
