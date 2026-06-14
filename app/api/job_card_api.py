@@ -1030,10 +1030,12 @@ class JobCardOperations:
             
         try:
             contents = file.file.read()
-            wb = openpyxl.load_workbook(io.BytesIO(contents))
+            wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True)
             ws = wb.active
             
             product_ids = []
+            qr_ids = []
+            
             # Expected header: Product ID (or just column 1)
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if not any(row): continue
@@ -1041,15 +1043,23 @@ class JobCardOperations:
                 qr_id = row[0]
                 if not qr_id: continue
                 
-                qr_id = str(qr_id).strip()
-                is_valid = True
-                error = None
+                qr_ids.append(str(qr_id).strip())
                 
-                # Check if QR already exists and is linked to another job card
-                existing = qr_master_collection.find_one({"qr_id": qr_id})
-                if existing and existing.get("jobcard_id"):
+            # Perform a single bulk query to check for existing QR codes
+            existing_cursor = qr_master_collection.find(
+                {"qr_id": {"$in": qr_ids}},
+                {"qr_id": 1, "jobcard_id": 1}
+            )
+            existing_map = {doc["qr_id"]: doc.get("jobcard_id") for doc in existing_cursor}
+            
+            for qr_id in qr_ids:
+                linked_jobcard = existing_map.get(qr_id)
+                if linked_jobcard:
                     is_valid = False
-                    error = f"Product ID {qr_id} is already linked to Job Card {existing.get('jobcard_id')}"
+                    error = f"Product ID {qr_id} is already linked to Job Card {linked_jobcard}"
+                else:
+                    is_valid = True
+                    error = None
                 
                 product_ids.append({
                     "qr_id": qr_id,
@@ -1288,18 +1298,13 @@ class JobCardOperations:
             start_num = 1
             padding = 1
             
-        ids = []
+        wb = openpyxl.Workbook(write_only=True)
+        ws = wb.create_sheet(title="Generated IDs")
+        ws.append(["Product ID"])
+        
         for i in range(quantity):
             new_id = f"{prefix}{start_num + i:0{padding}d}"
-            ids.append(new_id)
-            
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Generated IDs"
-        
-        ws.append(["Product ID"])
-        for qr_id in ids:
-            ws.append([qr_id])
+            ws.append([new_id])
             
         buffer = io.BytesIO()
         wb.save(buffer)
