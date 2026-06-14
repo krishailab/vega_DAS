@@ -423,15 +423,50 @@ class B2BInwardOperations:
 
     @staticmethod
     def get_filter_options() -> dict:
-        inwards = list(b2b_inward_products_collection.find())
+        inwards = list(b2b_inward_products_collection.find({}, {"variant_id": 1, "_id": 0}))
+        variant_ids = list(set(inw["variant_id"] for inw in inwards if inw.get("variant_id")))
         
-        # Prefetch master collections
-        categories_by_id = {c["category_id"]: c for c in product_categories_collection.find()}
-        subcategories_by_id = {s["subcategory_id"]: s for s in product_subcategories_collection.find()}
-        brands_by_id = {b["brand_id"]: b for b in product_brands_collection.find()}
-        models_by_id = {m["model_id"]: m for m in product_models_collection.find()}
-        submodels_by_id = {sm["submodel_id"]: sm for sm in product_submodels_collection.find()}
-        variants_by_id = {v["variant_id"]: v for v in product_variants_collection.find()}
+        # Only prefetch variants that have active inwards
+        variants_cursor = product_variants_collection.find(
+            {"variant_id": {"$in": variant_ids}},
+            {"variant_id": 1, "submodel_id": 1, "color": 1, "size": 1, "size_name": 1, "_id": 0}
+        )
+        variants_by_id = {v["variant_id"]: v for v in variants_cursor}
+        
+        submodel_ids = list(set(v["submodel_id"] for v in variants_by_id.values() if v.get("submodel_id")))
+        submodels_cursor = product_submodels_collection.find(
+            {"submodel_id": {"$in": submodel_ids}},
+            {"submodel_id": 1, "name": 1, "model_id": 1, "color": 1, "finish": 1, "_id": 0}
+        )
+        submodels_by_id = {sm["submodel_id"]: sm for sm in submodels_cursor}
+        
+        model_ids = list(set(sm["model_id"] for sm in submodels_by_id.values() if sm.get("model_id")))
+        models_cursor = product_models_collection.find(
+            {"model_id": {"$in": model_ids}},
+            {"model_id": 1, "name": 1, "brand_id": 1, "category_id": 1, "subcategory_id": 1, "_id": 0}
+        )
+        models_by_id = {m["model_id"]: m for m in models_cursor}
+        
+        brand_ids = list(set(m["brand_id"] for m in models_by_id.values() if m.get("brand_id")))
+        brands_cursor = product_brands_collection.find(
+            {"brand_id": {"$in": brand_ids}},
+            {"brand_id": 1, "name": 1, "_id": 0}
+        )
+        brands_by_id = {b["brand_id"]: b for b in brands_cursor}
+        
+        category_ids = list(set(m["category_id"] for m in models_by_id.values() if m.get("category_id")))
+        categories_cursor = product_categories_collection.find(
+            {"category_id": {"$in": category_ids}},
+            {"category_id": 1, "name": 1, "_id": 0}
+        )
+        categories_by_id = {c["category_id"]: c for c in categories_cursor}
+        
+        subcategory_ids = list(set(m["subcategory_id"] for m in models_by_id.values() if m.get("subcategory_id")))
+        subcategories_cursor = product_subcategories_collection.find(
+            {"subcategory_id": {"$in": subcategory_ids}},
+            {"subcategory_id": 1, "name": 1, "category_id": 1, "_id": 0}
+        )
+        subcategories_by_id = {s["subcategory_id"]: s for s in subcategories_cursor}
 
         used_categories = {}
         used_subcategories = {}
