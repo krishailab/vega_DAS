@@ -540,8 +540,6 @@ class B2BInwardOperations:
             "categories": sorted(list(used_categories.values()), key=lambda x: x["name"]),
             "subcategories": sorted(list(used_subcategories.values()), key=lambda x: x["name"]),
             "brands": sorted(list(used_brands.values()), key=lambda x: x["name"]),
-            "models": sorted(list(used_models.values()), key=lambda x: x["name"]),
-            "submodels": sorted(list(used_submodels.values()), key=lambda x: x["name"]),
             "colors": sorted(list(used_colors)),
             "sizes": sorted(list(used_sizes)),
             "size_names": sorted(list(used_size_names))
