@@ -159,6 +159,8 @@ submodel_a = ProductSubModelOperations.create_submodel(
         carton_numbers="BOLT-RED-CAR"
     ),
     image_file=None,
+    images=[],
+    certification=[],
     current_user=admin_user
 )
 assert submodel_a["submodel_id"] == f"PSMD{yy}AAAA0001"

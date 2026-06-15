@@ -223,15 +223,19 @@ class ProductBrandOperations:
 class ProductModelOperations:
     @staticmethod
     def create_model(model: schemas.ProductModelCreate, current_user: dict):
-        # Validate parent category
-        category = product_categories_collection.find_one({"category_id": model.category_id})
-        if not category:
-            raise HTTPException(status_code=404, detail="Product category not found")
-
-        # Validate parent subcategory
+        # Validate parent subcategory first to inherit category_id if not provided
         subcategory = product_subcategories_collection.find_one({"subcategory_id": model.subcategory_id})
         if not subcategory:
             raise HTTPException(status_code=404, detail="Product subcategory not found")
+
+        category_id = model.category_id or subcategory.get("category_id")
+        if not category_id:
+            raise HTTPException(status_code=400, detail="Product category_id is required or must be linked to the subcategory")
+
+        # Validate parent category
+        category = product_categories_collection.find_one({"category_id": category_id})
+        if not category:
+            raise HTTPException(status_code=404, detail="Product category not found")
 
         # Validate parent brand
         brand = product_brands_collection.find_one({"brand_id": model.brand_id})
@@ -241,12 +245,13 @@ class ProductModelOperations:
         if product_models_collection.find_one({
             "name": model.name,
             "brand_id": model.brand_id,
-            "category_id": model.category_id,
+            "category_id": category_id,
             "subcategory_id": model.subcategory_id
         }):
             raise HTTPException(status_code=400, detail="Product model already exists with these parameters")
 
         model_dict = model.model_dump()
+        model_dict["category_id"] = category_id
         model_id = utils.generate_custom_id("PMOD", product_models_collection, "model_id")
         model_dict["model_id"] = model_id
         
@@ -351,11 +356,10 @@ class ProductSubModelOperations:
     @staticmethod
     def create_submodel(
         submodel: schemas.ProductSubModelCreate, 
-        image_file: Optional[UploadFile], 
-        images: List[Union[UploadFile, str]], 
-        certification: List[Union[UploadFile, str]], 
-        parsed_variants: List[list],
-        current_user: dict
+        image_file: Optional[UploadFile] = None, 
+        images: List[Union[UploadFile, str]] = None, 
+        certification: List[Union[UploadFile, str]] = None, 
+        current_user: dict = None
     ):
         # Validate parent model
         model = product_models_collection.find_one({"model_id": submodel.model_id})
@@ -371,17 +375,6 @@ class ProductSubModelOperations:
         submodel_id = utils.generate_custom_id("PSMD", product_submodels_collection, "submodel_id")
         
         base_dir = os.path.join("qrcodes", "Submodels", submodel_id)
-        
-        image_url = None
-        if image_file and image_file.filename:
-            os.makedirs(base_dir, exist_ok=True)
-            ext = os.path.splitext(image_file.filename)[1] or ".png"
-            image_path = os.path.join(base_dir, f"image{ext}")
-            with open(image_path, "wb") as buf:
-                shutil.copyfileobj(image_file.file, buf)
-            image_url = f"/qrcodes/Submodels/{submodel_id}/image{ext}"
-        elif submodel.image:
-            image_url = submodel.image
 
         # Save product_images
         product_image_urls = []
@@ -415,7 +408,6 @@ class ProductSubModelOperations:
             "submodel_id": submodel_id,
             "name": submodel.name,
             "model_id": submodel.model_id,
-            "image": image_url,
             "is_active": submodel.is_active,
             "box_weight": submodel.box_weight,
             "box_dimension": submodel.box_dimension,
@@ -423,86 +415,28 @@ class ProductSubModelOperations:
             "carton_dimension": submodel.carton_dimension,
             
             # Variant fields stored on submodel
-            "gs1_barcode": submodel.gs1_barcode,
             "short_description": submodel.short_description,
             "long_description": submodel.long_description,
-            "carton_box_size": submodel.carton_box_size,
-            "carton_barcode": submodel.carton_barcode,
             "product_images": product_image_urls,
-            "finish": submodel.finish,
             "certification": cert_urls,
             "visor_type": submodel.visor_type,
             "spoiler": submodel.spoiler,
-            "chinstrap_lock": submodel.chinstrap_lock,
             "pinlock": submodel.pinlock,
-            "mrp": submodel.mrp,
+            "style": submodel.style,
             
             "model_name": model.get("name"),
             "model_status": model.get("is_active"),
             "model_is_active": model.get("is_active"),
+            "model_chinstrap_lock": model.get("chinstrap_lock"),
             "brand_id": (product_brands_collection.find_one({"brand_id": model.get("brand_id")}) or {}).get("brand_id") if model else None,
             "brand_name": (product_brands_collection.find_one({"brand_id": model.get("brand_id")}) or {}).get("name") if model else None,
-            "created_by": current_user["user_id"],
+            "created_by": current_user["user_id"] if current_user else "SYSTEM",
             "created_at": utils.get_current_time()
         }
 
-        # Check SKU uniqueness across all submodels before inserting anything
-        for item in parsed_variants:
-            sku_no = item[2]
-            existing_var = product_variants_collection.find_one({"sku_no": sku_no})
-            if existing_var:
-                raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists")
-
         product_submodels_collection.insert_one(submodel_dict)
         submodel_dict.pop("_id", None)
-
-        inserted_variants = []
-        for item in parsed_variants:
-            size_name = item[0]
-            size = item[1]
-            sku_no = item[2]
-            variant_color = item[3] if len(item) > 3 and item[3] is not None else None
-            variant_images = item[4] if len(item) > 4 and item[4] is not None else product_image_urls
-            
-            variant_id = utils.generate_custom_id("PVAR", product_variants_collection, "variant_id")
-            variant_dict = {
-                "variant_id": variant_id,
-                "submodel_id": submodel_id,
-                "sku_no": sku_no,
-                "size_name": size_name,
-                "size": size,
-                "is_active": True,
-                
-                # Propagate submodel fields to variant
-                "gs1_barcode": submodel.gs1_barcode,
-                "short_description": submodel.short_description,
-                "long_description": submodel.long_description,
-                "carton_box_size": submodel.carton_box_size,
-                "carton_barcode": submodel.carton_barcode,
-                "product_images": variant_images,
-                "color": variant_color,
-                "finish": submodel.finish,
-                "certification": cert_urls,
-                "visor_type": submodel.visor_type,
-                "spoiler": submodel.spoiler,
-                "chinstrap_lock": submodel.chinstrap_lock,
-                "pinlock": submodel.pinlock,
-                "mrp": submodel.mrp,
-                
-                "created_by": current_user["user_id"],
-                "created_at": utils.get_current_time()
-            }
-            product_variants_collection.insert_one(variant_dict)
-            inserted_variants.append({
-                "variant_id": variant_dict["variant_id"],
-                "sku_no": variant_dict["sku_no"],
-                "size": variant_dict["size"],
-                "size_name": variant_dict["size_name"],
-                "color": variant_dict.get("color"),
-                "product_images": variant_dict.get("product_images", [])
-            })
-            
-        submodel_dict["variants"] = inserted_variants
+        submodel_dict["variants"] = []
         return submodel_dict
 
     @staticmethod
@@ -536,7 +470,8 @@ class ProductSubModelOperations:
         submodel_ids = [s["submodel_id"] for s in submodels if s.get("submodel_id")]
         variants = list(product_variants_collection.find(
             {"submodel_id": {"$in": submodel_ids}},
-            {"_id": 0, "variant_id": 1, "sku_no": 1, "size": 1, "size_name": 1, "color": 1, "product_images": 1, "submodel_id": 1}
+            {"_id": 0, "variant_id": 1, "sku_no": 1, "size": 1, "size_name": 1, "color": 1, "product_images": 1, "submodel_id": 1,
+             "finish": 1, "mrp": 1, "gs1_barcode": 1, "carton_barcode": 1, "is_active": 1}
         )) if submodel_ids else []
         
         variants_by_submodel = {}
@@ -550,7 +485,12 @@ class ProductSubModelOperations:
                 "size": v.get("size"),
                 "size_name": v.get("size_name"),
                 "color": v.get("color"),
-                "product_images": v.get("product_images", [])
+                "product_images": v.get("product_images", []),
+                "finish": v.get("finish"),
+                "mrp": v.get("mrp"),
+                "gs1_barcode": v.get("gs1_barcode"),
+                "carton_barcode": v.get("carton_barcode"),
+                "is_active": v.get("is_active", True)
             })
             
         for s in submodels:
@@ -560,6 +500,7 @@ class ProductSubModelOperations:
             s["model_name"] = model.get("name") if model else None
             s["model_status"] = model.get("is_active") if model else None
             s["model_is_active"] = model.get("is_active") if model else None
+            s["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
             
             # Resolve Brand Info
             brand = brands_dict.get(model.get("brand_id")) if model else None
@@ -584,7 +525,6 @@ class ProductSubModelOperations:
         image_file: Optional[UploadFile] = None,
         images: Optional[List[Union[UploadFile, str]]] = None,
         certification: Optional[List[Union[UploadFile, str]]] = None,
-        parsed_variants: Optional[List[list]] = None,
         current_user: Optional[dict] = None
     ):
         existing = product_submodels_collection.find_one({"submodel_id": submodel_id})
@@ -598,22 +538,13 @@ class ProductSubModelOperations:
             update_data["is_active"] = submodel.is_active
 
         for field in ["box_weight", "box_dimension", "carton_weight", "carton_dimension",
-                      "gs1_barcode", "short_description", "long_description", "carton_box_size", "carton_barcode", "finish", 
-                      "visor_type", "spoiler", "chinstrap_lock", "pinlock", "mrp"]:
+                      "short_description", "long_description", 
+                      "visor_type", "spoiler", "pinlock", "style"]:
             val = getattr(submodel, field, None)
             if val is not None:
                 update_data[field] = val
             
         base_dir = os.path.join("qrcodes", "Submodels", submodel_id)
-        if image_file and image_file.filename:
-            os.makedirs(base_dir, exist_ok=True)
-            ext = os.path.splitext(image_file.filename)[1] or ".png"
-            image_path = os.path.join(base_dir, f"image{ext}")
-            with open(image_path, "wb") as buf:
-                shutil.copyfileobj(image_file.file, buf)
-            update_data["image"] = f"/qrcodes/Submodels/{submodel_id}/image{ext}"
-        elif submodel.image is not None:
-            update_data["image"] = submodel.image
 
         if images is not None:
             new_image_urls = []
@@ -650,99 +581,20 @@ class ProductSubModelOperations:
 
         updated_submodel = product_submodels_collection.find_one({"submodel_id": submodel_id})
 
-        if parsed_variants is not None:
-            # Check SKU uniqueness across other submodels
-            for item in parsed_variants:
-                sku_no = item[2]
-                existing_var = product_variants_collection.find_one({"sku_no": sku_no})
-                if existing_var and existing_var["submodel_id"] != submodel_id:
-                    raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists in another submodel")
-            
-            # Delete any existing variants of this submodel that are not in the new variants list
-            new_skus = {item[2] for item in parsed_variants}
-            product_variants_collection.delete_many({
-                "submodel_id": submodel_id,
-                "sku_no": {"$nin": list(new_skus)}
-            })
-
-            # Upsert variants
-            for item in parsed_variants:
-                size_name = item[0]
-                size = item[1]
-                sku_no = item[2]
-                variant_color = item[3] if len(item) > 3 and item[3] is not None else None
-                variant_images = item[4] if len(item) > 4 and item[4] is not None else updated_submodel.get("product_images", [])
-                
-                existing_var = product_variants_collection.find_one({"sku_no": sku_no, "submodel_id": submodel_id})
-                if existing_var:
-                    product_variants_collection.update_one(
-                        {"variant_id": existing_var["variant_id"]},
-                        {"$set": {
-                            "size_name": size_name,
-                            "size": size,
-                            "gs1_barcode": updated_submodel.get("gs1_barcode"),
-                            "short_description": updated_submodel.get("short_description"),
-                            "long_description": updated_submodel.get("long_description"),
-                            "carton_box_size": updated_submodel.get("carton_box_size"),
-                            "carton_barcode": updated_submodel.get("carton_barcode"),
-                            "product_images": variant_images,
-                            "color": variant_color,
-                            "finish": updated_submodel.get("finish"),
-                            "certification": updated_submodel.get("certification", []),
-                            "visor_type": updated_submodel.get("visor_type"),
-                            "spoiler": updated_submodel.get("spoiler"),
-                            "chinstrap_lock": updated_submodel.get("chinstrap_lock"),
-                            "pinlock": updated_submodel.get("pinlock"),
-                            "mrp": updated_submodel.get("mrp")
-                        }}
-                    )
-                else:
-                    variant_id = utils.generate_custom_id("PVAR", product_variants_collection, "variant_id")
-                    new_var = {
-                        "variant_id": variant_id,
-                        "submodel_id": submodel_id,
-                        "sku_no": sku_no,
-                        "size_name": size_name,
-                        "size": size,
-                        "is_active": True,
-                        "gs1_barcode": updated_submodel.get("gs1_barcode"),
-                        "short_description": updated_submodel.get("short_description"),
-                        "long_description": updated_submodel.get("long_description"),
-                        "carton_box_size": updated_submodel.get("carton_box_size"),
-                        "carton_barcode": updated_submodel.get("carton_barcode"),
-                        "product_images": variant_images,
-                        "color": variant_color,
-                        "finish": updated_submodel.get("finish"),
-                        "certification": updated_submodel.get("certification", []),
-                        "visor_type": updated_submodel.get("visor_type"),
-                        "spoiler": updated_submodel.get("spoiler"),
-                        "chinstrap_lock": updated_submodel.get("chinstrap_lock"),
-                        "pinlock": updated_submodel.get("pinlock"),
-                        "mrp": updated_submodel.get("mrp"),
-                        "created_by": current_user["user_id"] if current_user else "SYSTEM",
-                        "created_at": utils.get_current_time()
-                    }
-                    product_variants_collection.insert_one(new_var)
-        else:
-            # Propagate updated submodel fields to ALL existing variants of this submodel
-            product_variants_collection.update_many(
-                {"submodel_id": submodel_id},
-                {"$set": {
-                    "gs1_barcode": updated_submodel.get("gs1_barcode"),
-                    "short_description": updated_submodel.get("short_description"),
-                    "long_description": updated_submodel.get("long_description"),
-                    "carton_box_size": updated_submodel.get("carton_box_size"),
-                    "carton_barcode": updated_submodel.get("carton_barcode"),
-                    "product_images": updated_submodel.get("product_images", []),
-                    "finish": updated_submodel.get("finish"),
-                    "certification": updated_submodel.get("certification", []),
-                    "visor_type": updated_submodel.get("visor_type"),
-                    "spoiler": updated_submodel.get("spoiler"),
-                    "chinstrap_lock": updated_submodel.get("chinstrap_lock"),
-                    "pinlock": updated_submodel.get("pinlock"),
-                    "mrp": updated_submodel.get("mrp")
-                }}
-            )
+        # Propagate updated submodel fields to ALL existing variants of this submodel
+        product_variants_collection.update_many(
+            {"submodel_id": submodel_id},
+            {"$set": {
+                "short_description": updated_submodel.get("short_description"),
+                "long_description": updated_submodel.get("long_description"),
+                "product_images": updated_submodel.get("product_images", []),
+                "certification": updated_submodel.get("certification", []),
+                "visor_type": updated_submodel.get("visor_type"),
+                "spoiler": updated_submodel.get("spoiler"),
+                "pinlock": updated_submodel.get("pinlock"),
+                "style": updated_submodel.get("style")
+            }}
+        )
 
         updated_submodel.pop("_id", None)
         
@@ -751,6 +603,7 @@ class ProductSubModelOperations:
         updated_submodel["model_name"] = model.get("name") if model else None
         updated_submodel["model_status"] = model.get("is_active") if model else None
         updated_submodel["model_is_active"] = model.get("is_active") if model else None
+        updated_submodel["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
         brand = product_brands_collection.find_one({"brand_id": model.get("brand_id")}) if model else None
         updated_submodel["brand_id"] = brand.get("brand_id") if brand else None
         updated_submodel["brand_name"] = brand.get("name") if brand else None
@@ -759,14 +612,173 @@ class ProductSubModelOperations:
         # Fetch current variants
         variants_list = list(product_variants_collection.find(
             {"submodel_id": submodel_id},
-            {"_id": 0, "variant_id": 1, "sku_no": 1, "size": 1, "size_name": 1, "color": 1, "product_images": 1}
+            {"_id": 0, "variant_id": 1, "sku_no": 1, "size": 1, "size_name": 1, "color": 1, "product_images": 1,
+             "finish": 1, "mrp": 1, "gs1_barcode": 1, "carton_barcode": 1, "is_active": 1}
         )) if submodel_id else []
         updated_submodel["variants"] = variants_list
         return updated_submodel
 
 class ProductVariantOperations:
     @staticmethod
-    def create_variant(variant: schemas.ProductVariantCreate, images: List[Union[UploadFile, str]], certification: List[Union[UploadFile, str]], current_user: dict):
+    def create_variants_list(submodel_id: str, parsed_variants: List[Union[list, dict]], images: List[UploadFile] = None, current_user: Optional[dict] = None):
+        submodel = product_submodels_collection.find_one({"submodel_id": submodel_id})
+        if not submodel:
+            raise HTTPException(status_code=404, detail="Product submodel not found")
+
+        model = product_models_collection.find_one({"model_id": submodel.get("model_id")}) if submodel else None
+        brand = product_brands_collection.find_one({"brand_id": model["brand_id"]}) if model else None
+        category = product_categories_collection.find_one({"category_id": model["category_id"]}) if model else None
+        subcategory = product_subcategories_collection.find_one({"subcategory_id": model["subcategory_id"]}) if model else None
+
+        # Map uploaded files by filename
+        uploaded_files = {}
+        if images:
+            for img in images:
+                if hasattr(img, "filename") and img.filename:
+                    uploaded_files[img.filename] = img
+
+        # Check SKU uniqueness across all submodels before inserting anything
+        for item in parsed_variants:
+            if isinstance(item, dict):
+                sku_no = item.get("sku_no")
+                if not sku_no or not item.get("size_name") or item.get("size") is None:
+                    raise HTTPException(status_code=400, detail="Each variant object must contain size_name, size, and sku_no")
+            else:
+                if len(item) < 3:
+                    raise HTTPException(status_code=400, detail="Each variant must contain at least size_name, size, and sku_no")
+                sku_no = item[2]
+            existing_var = product_variants_collection.find_one({"sku_no": sku_no})
+            if existing_var:
+                raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists")
+
+        variant_ids = utils.generate_custom_ids("PVAR", product_variants_collection, "variant_id", len(parsed_variants))
+        inserted_variants = []
+        for idx, item in enumerate(parsed_variants):
+            if isinstance(item, dict):
+                size_name = item.get("size_name")
+                size = item.get("size")
+                sku_no = item.get("sku_no")
+                variant_color = item.get("color")
+                
+                raw_variant_images = item.get("product_images", [])
+                
+                # Overrides
+                gs1_barcode = item.get("gs1_barcode")
+                carton_barcode = item.get("carton_barcode")
+                finish = item.get("finish")
+                mrp = item.get("mrp")
+                style = item.get("style") if item.get("style") is not None else submodel.get("style")
+                short_description = item.get("short_description") if item.get("short_description") is not None else submodel.get("short_description")
+                long_description = item.get("long_description") if item.get("long_description") is not None else submodel.get("long_description")
+                carton_box_size = item.get("carton_box_size")
+                chinstrap_lock = item.get("chinstrap_lock") if item.get("chinstrap_lock") is not None else (model.get("chinstrap_lock") if model else None)
+            else:
+                size_name = item[0]
+                size = item[1]
+                sku_no = item[2]
+                variant_color = item[3] if len(item) > 3 and item[3] is not None else None
+                
+                raw_variant_images = item[4] if len(item) > 4 and item[4] is not None else []
+                
+                # Default empty/none values
+                gs1_barcode = None
+                carton_barcode = None
+                finish = None
+                mrp = None
+                style = submodel.get("style")
+                short_description = submodel.get("short_description")
+                long_description = submodel.get("long_description")
+                carton_box_size = None
+                chinstrap_lock = model.get("chinstrap_lock") if model else None
+            
+            variant_id = variant_ids[idx]
+            
+            variant_images = []
+            base_dir = os.path.join("qrcodes", "Variants", variant_id)
+            if raw_variant_images:
+                for img_val in raw_variant_images:
+                    if isinstance(img_val, str) and img_val in uploaded_files:
+                        uploaded_file = uploaded_files[img_val]
+                        os.makedirs(base_dir, exist_ok=True)
+                        ext = os.path.splitext(uploaded_file.filename)[1] or ".png"
+                        img_name = f"image_{len(variant_images)}{ext}"
+                        img_path = os.path.join(base_dir, img_name)
+                        uploaded_file.file.seek(0)
+                        with open(img_path, "wb") as buf:
+                            shutil.copyfileobj(uploaded_file.file, buf)
+                        variant_images.append(f"/qrcodes/Variants/{variant_id}/{img_name}")
+                    else:
+                        variant_images.append(img_val)
+            else:
+                # Inherit from submodel directly
+                variant_images = submodel.get("product_images", [])
+
+            variant_dict = {
+                "variant_id": variant_id,
+                "submodel_id": submodel_id,
+                "sku_no": sku_no,
+                "size_name": size_name,
+                "size": size,
+                "is_active": True,
+                "gs1_barcode": gs1_barcode,
+                "carton_barcode": carton_barcode,
+                "product_images": variant_images,
+                "color": variant_color,
+                "finish": finish,
+                "mrp": mrp,
+                
+                "created_by": current_user["user_id"] if current_user else "SYSTEM",
+                "created_at": utils.get_current_time()
+            }
+            product_variants_collection.insert_one(variant_dict)
+            variant_dict.pop("_id", None)
+            
+            # Dynamic upward hierarchy resolved from pre-fetched documents
+            variant_dict["short_description"] = submodel.get("short_description") if submodel else None
+            variant_dict["long_description"] = submodel.get("long_description") if submodel else None
+            variant_dict["visor_type"] = submodel.get("visor_type") if submodel else None
+            variant_dict["spoiler"] = submodel.get("spoiler") if submodel else None
+            variant_dict["pinlock"] = submodel.get("pinlock") if submodel else None
+            variant_dict["style"] = submodel.get("style") if submodel else None
+            variant_dict["certification"] = submodel.get("certification", []) if submodel else []
+            variant_dict["chinstrap_lock"] = chinstrap_lock
+
+            variant_dict["submodel_name"] = submodel.get("name") if submodel else None
+            variant_dict["submodel_image"] = submodel.get("image") if submodel else None
+            variant_dict["submodel_status"] = submodel.get("is_active") if submodel else None
+            variant_dict["submodel_is_active"] = submodel.get("is_active") if submodel else None
+
+            variant_dict["box_weight"] = submodel.get("box_weight") if submodel else None
+            variant_dict["box_dimension"] = submodel.get("box_dimension") if submodel else None
+            variant_dict["carton_weight"] = submodel.get("carton_weight") if submodel else None
+            variant_dict["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+
+            variant_dict["model_id"] = model.get("model_id") if model else None
+            variant_dict["model_name"] = model.get("name") if model else None
+            variant_dict["model_status"] = model.get("is_active") if model else None
+            variant_dict["model_is_active"] = model.get("is_active") if model else None
+            variant_dict["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
+
+            variant_dict["brand_id"] = brand.get("brand_id") if brand else None
+            variant_dict["brand_name"] = brand.get("name") if brand else None
+            variant_dict["brand_status"] = brand.get("is_active") if brand else None
+            variant_dict["brand_is_active"] = brand.get("is_active") if brand else None
+
+            variant_dict["category_id"] = category.get("category_id") if category else None
+            variant_dict["category_name"] = category.get("name") if category else None
+            variant_dict["category_status"] = category.get("is_active") if category else None
+            variant_dict["category_is_active"] = category.get("is_active") if category else None
+
+            variant_dict["subcategory_id"] = subcategory.get("subcategory_id") if subcategory else None
+            variant_dict["subcategory_name"] = subcategory.get("name") if subcategory else None
+            variant_dict["subcategory_status"] = subcategory.get("is_active") if subcategory else None
+            variant_dict["subcategory_is_active"] = subcategory.get("is_active") if subcategory else None
+
+            inserted_variants.append(variant_dict)
+        return {"variants": inserted_variants}
+
+    @staticmethod
+    def create_variant(variant: schemas.ProductVariantCreate, images: List[Union[UploadFile, str]] = None, certification: List[Union[UploadFile, str]] = None, current_user: Optional[dict] = None):
         if product_variants_collection.find_one({"sku_no": variant.sku_no}):
             raise HTTPException(status_code=400, detail="Product variant with this SKU number already exists")
 
@@ -775,6 +787,8 @@ class ProductVariantOperations:
             raise HTTPException(status_code=404, detail="Product submodel not found")
 
         variant_dict = variant.model_dump()
+        # Resolve chinstrap_lock from model if not provided on the variant
+        # Note: chinstrap_lock is no longer stored on the variant DB document but resolved dynamically
         variant_id = utils.generate_custom_id("PVAR", product_variants_collection, "variant_id")
         variant_dict["variant_id"] = variant_id
         
@@ -783,6 +797,7 @@ class ProductVariantOperations:
         base_dir = os.path.join("qrcodes", "Variants", variant_id)
         
         # Keep track of existing images or newly uploaded files
+        images = images or []
         for img in images:
             if hasattr(img, "file") and img.filename:
                 os.makedirs(base_dir, exist_ok=True)
@@ -800,6 +815,7 @@ class ProductVariantOperations:
 
         # Robustly handle certification files/documents which might be UploadFiles or strings
         cert_urls = []
+        certification = certification or []
         for cert_item in certification:
             if hasattr(cert_item, "file") and cert_item.filename:
                 os.makedirs(base_dir, exist_ok=True)
@@ -814,7 +830,7 @@ class ProductVariantOperations:
         
         variant_dict["certification"] = cert_urls
 
-        variant_dict["created_by"] = current_user["user_id"]
+        variant_dict["created_by"] = current_user["user_id"] if current_user else "SYSTEM"
         variant_dict["created_at"] = utils.get_current_time()
 
         # Insert raw variant data only to keep DB clean and normalize references
@@ -826,6 +842,15 @@ class ProductVariantOperations:
         brand = product_brands_collection.find_one({"brand_id": model["brand_id"]}) if model else None
         category = product_categories_collection.find_one({"category_id": model["category_id"]}) if model else None
         subcategory = product_subcategories_collection.find_one({"subcategory_id": model["subcategory_id"]}) if model else None
+
+        variant_dict["short_description"] = submodel.get("short_description") if submodel else None
+        variant_dict["long_description"] = submodel.get("long_description") if submodel else None
+        variant_dict["visor_type"] = submodel.get("visor_type") if submodel else None
+        variant_dict["spoiler"] = submodel.get("spoiler") if submodel else None
+        variant_dict["pinlock"] = submodel.get("pinlock") if submodel else None
+        variant_dict["style"] = submodel.get("style") if submodel else None
+        variant_dict["certification"] = submodel.get("certification", []) if submodel else []
+        variant_dict["chinstrap_lock"] = model.get("chinstrap_lock") if model else None
 
         variant_dict["submodel_name"] = submodel.get("name") if submodel else None
         variant_dict["submodel_image"] = submodel.get("image") if submodel else None
@@ -841,6 +866,7 @@ class ProductVariantOperations:
         variant_dict["model_name"] = model.get("name") if model else None
         variant_dict["model_status"] = model.get("is_active") if model else None
         variant_dict["model_is_active"] = model.get("is_active") if model else None
+        variant_dict["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
 
         variant_dict["brand_id"] = brand.get("brand_id") if brand else None
         variant_dict["brand_name"] = brand.get("name") if brand else None
@@ -908,6 +934,17 @@ class ProductVariantOperations:
             v["model_name"] = model.get("name") if model else None
             v["model_status"] = model.get("is_active") if model else None
             v["model_is_active"] = model.get("is_active") if model else None
+            v["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
+
+            # Dynamic submodel/model resolutions
+            v["short_description"] = submodel.get("short_description") if submodel else None
+            v["long_description"] = submodel.get("long_description") if submodel else None
+            v["visor_type"] = submodel.get("visor_type") if submodel else None
+            v["spoiler"] = submodel.get("spoiler") if submodel else None
+            v["pinlock"] = submodel.get("pinlock") if submodel else None
+            v["style"] = submodel.get("style") if submodel else None
+            v["certification"] = submodel.get("certification", []) if submodel else []
+            v["chinstrap_lock"] = v.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
             v["brand_id"] = brand.get("brand_id") if brand else None
             v["brand_name"] = brand.get("name") if brand else None
@@ -964,22 +1001,6 @@ class ProductVariantOperations:
         if has_new_uploads:
             update_data["product_images"] = image_urls
 
-        # Robustly handle certification list (can be overwritten or cleared)
-        if certification is not None:
-            cert_urls = []
-            for cert_item in certification:
-                if hasattr(cert_item, "file") and cert_item.filename:
-                    os.makedirs(base_dir, exist_ok=True)
-                    ext = os.path.splitext(cert_item.filename)[1] or ".pdf"
-                    cert_name = f"cert_{len(cert_urls)}{ext}"
-                    cert_path = os.path.join(base_dir, cert_name)
-                    with open(cert_path, "wb") as buf:
-                        shutil.copyfileobj(cert_item.file, buf)
-                    cert_urls.append(f"/qrcodes/Variants/{variant_id}/{cert_name}")
-                elif isinstance(cert_item, str) and cert_item.strip():
-                    cert_urls.append(cert_item.strip())
-            update_data["certification"] = cert_urls
-            
         if update_data:
             product_variants_collection.update_one({"variant_id": variant_id}, {"$set": update_data})
 
@@ -1007,6 +1028,17 @@ class ProductVariantOperations:
         updated["model_name"] = model.get("name") if model else None
         updated["model_status"] = model.get("is_active") if model else None
         updated["model_is_active"] = model.get("is_active") if model else None
+        updated["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
+
+        # Dynamic submodel/model resolutions
+        updated["short_description"] = submodel.get("short_description") if submodel else None
+        updated["long_description"] = submodel.get("long_description") if submodel else None
+        updated["visor_type"] = submodel.get("visor_type") if submodel else None
+        updated["spoiler"] = submodel.get("spoiler") if submodel else None
+        updated["pinlock"] = submodel.get("pinlock") if submodel else None
+        updated["style"] = submodel.get("style") if submodel else None
+        updated["certification"] = submodel.get("certification", []) if submodel else []
+        updated["chinstrap_lock"] = updated.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
         updated["brand_id"] = brand.get("brand_id") if brand else None
         updated["brand_name"] = brand.get("name") if brand else None
@@ -1140,6 +1172,17 @@ class ProductVariantOperations:
             v["model_name"] = model.get("name") if model else None
             v["model_status"] = model.get("is_active") if model else None
             v["model_is_active"] = model.get("is_active") if model else None
+            v["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
+
+            # Dynamic submodel/model resolutions
+            v["short_description"] = submodel.get("short_description") if submodel else None
+            v["long_description"] = submodel.get("long_description") if submodel else None
+            v["visor_type"] = submodel.get("visor_type") if submodel else None
+            v["spoiler"] = submodel.get("spoiler") if submodel else None
+            v["pinlock"] = submodel.get("pinlock") if submodel else None
+            v["style"] = submodel.get("style") if submodel else None
+            v["certification"] = submodel.get("certification", []) if submodel else []
+            v["chinstrap_lock"] = v.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
             v["brand_id"] = brand.get("brand_id") if brand else None
             v["brand_name"] = brand.get("name") if brand else None
@@ -1186,6 +1229,17 @@ class ProductVariantOperations:
         variant["model_name"] = model.get("name") if model else None
         variant["model_status"] = model.get("is_active") if model else None
         variant["model_is_active"] = model.get("is_active") if model else None
+        variant["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
+
+        # Dynamic submodel/model resolutions
+        variant["short_description"] = submodel.get("short_description") if submodel else None
+        variant["long_description"] = submodel.get("long_description") if submodel else None
+        variant["visor_type"] = submodel.get("visor_type") if submodel else None
+        variant["spoiler"] = submodel.get("spoiler") if submodel else None
+        variant["pinlock"] = submodel.get("pinlock") if submodel else None
+        variant["style"] = submodel.get("style") if submodel else None
+        variant["certification"] = submodel.get("certification", []) if submodel else []
+        variant["chinstrap_lock"] = variant.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
         variant["brand_id"] = brand.get("brand_id") if brand else None
         variant["brand_name"] = brand.get("name") if brand else None
@@ -1331,7 +1385,6 @@ def update_product_model(
 def create_product_submodel(
     name: str = Form(...),
     model_id: str = Form(...),
-    image: Optional[UploadFile] = File(None),
     is_active: bool = Form(True),
     box_weight: Optional[float] = Form(None),
     box_dimension: Optional[str] = Form(None),
@@ -1339,20 +1392,14 @@ def create_product_submodel(
     carton_dimension: Optional[str] = Form(None),
     
     # Variant fields at submodel level
-    gs1_barcode: Optional[str] = Form(None),
     short_description: Optional[str] = Form(None),
     long_description: Optional[str] = Form(None),
-    carton_box_size: Optional[int] = Form(None),
-    carton_barcode: Optional[str] = Form(None),
-    finish: Optional[str] = Form(None),
     visor_type: Optional[str] = Form(None),
     spoiler: Optional[str] = Form(None),
-    chinstrap_lock: Optional[str] = Form(None),
     pinlock: Optional[str] = Form(None),
-    mrp: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
     certification: Optional[Union[List[str], str]] = Form(None),
-    variants: Optional[str] = Form(None),
+    style: Optional[str] = Form(None),
     
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
@@ -1395,62 +1442,25 @@ def create_product_submodel(
             elif certification.strip():
                 valid_certs.append(certification.strip())
 
-    parsed_mrp = None
-    if mrp is not None:
-        mrp_str = str(mrp).strip()
-        if mrp_str.startswith("{") and mrp_str.endswith("}"):
-            import json
-            try:
-                parsed_mrp = json.loads(mrp_str)
-                if isinstance(parsed_mrp, dict):
-                    parsed_mrp = {k: float(v) for k, v in parsed_mrp.items()}
-            except Exception:
-                try:
-                    parsed_mrp = {"INR": float(mrp_str)}
-                except Exception:
-                    parsed_mrp = None
-        else:
-            try:
-                parsed_mrp = {"INR": float(mrp_str)}
-            except Exception:
-                parsed_mrp = None
-
-    parsed_variants = []
-    if variants:
-        import json
-        try:
-            parsed_variants = json.loads(variants)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid format for variants. Must be a JSON array of arrays like [['s', 80, 'SKU-567']]")
-        
-        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and 3 <= len(v) <= 5 for v in parsed_variants):
-            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3 to 5: [size_name, size, sku_no, color (optional), product_images (optional)]")
-
     submodel_schema = schemas.ProductSubModelCreate(
         name=name,
         model_id=model_id,
-        image=None,
         is_active=is_active,
         box_weight=box_weight,
         box_dimension=box_dimension,
         carton_weight=carton_weight,
         carton_dimension=carton_dimension,
-        gs1_barcode=gs1_barcode,
         short_description=short_description,
         long_description=long_description,
-        carton_box_size=carton_box_size,
-        carton_barcode=carton_barcode,
         product_images=[],
-        finish=finish,
         certification=[],
         visor_type=visor_type,
         spoiler=spoiler,
-        chinstrap_lock=chinstrap_lock,
         pinlock=pinlock,
-        mrp=parsed_mrp
+        style=style
     )
     return ProductSubModelOperations.create_submodel(
-        submodel_schema, image, valid_images, valid_certs, parsed_variants, current_user
+        submodel=submodel_schema, images=valid_images, certification=valid_certs, current_user=current_user
     )
 
 @router.get("/submodels/", response_model=dict)
@@ -1465,7 +1475,6 @@ def get_product_submodels(
 def update_product_submodel(
     submodel_id: str,
     name: Optional[str] = Form(None),
-    image: Optional[UploadFile] = File(None),
     is_active: Optional[bool] = Form(None),
     box_weight: Optional[float] = Form(None),
     box_dimension: Optional[str] = Form(None),
@@ -1473,20 +1482,14 @@ def update_product_submodel(
     carton_dimension: Optional[str] = Form(None),
     
     # New variant fields at submodel level
-    gs1_barcode: Optional[str] = Form(None),
     short_description: Optional[str] = Form(None),
     long_description: Optional[str] = Form(None),
-    carton_box_size: Optional[int] = Form(None),
-    carton_barcode: Optional[str] = Form(None),
-    finish: Optional[str] = Form(None),
     visor_type: Optional[str] = Form(None),
     spoiler: Optional[str] = Form(None),
-    chinstrap_lock: Optional[str] = Form(None),
     pinlock: Optional[str] = Form(None),
-    mrp: Optional[str] = Form(None),
     images: Optional[list[UploadFile]] = File(default=None),
     certification: Optional[Union[List[str], str]] = Form(None),
-    variants: Optional[str] = Form(None),
+    style: Optional[str] = Form(None),
     
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
@@ -1532,39 +1535,7 @@ def update_product_submodel(
             elif certification.strip():
                 valid_certs.append(certification.strip())
 
-    parsed_mrp = None
-    if mrp is not None:
-        mrp_str = str(mrp).strip()
-        if mrp_str.startswith("{") and mrp_str.endswith("}"):
-            import json
-            try:
-                parsed_mrp = json.loads(mrp_str)
-                if isinstance(parsed_mrp, dict):
-                    parsed_mrp = {k: float(v) for k, v in parsed_mrp.items()}
-            except Exception:
-                try:
-                    parsed_mrp = {"INR": float(mrp_str)}
-                except Exception:
-                    parsed_mrp = None
-        else:
-            try:
-                parsed_mrp = {"INR": float(mrp_str)}
-            except Exception:
-                parsed_mrp = None
-
-    parsed_variants = None
-    if variants is not None:
-        import json
-        try:
-            parsed_variants = json.loads(variants)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid format for variants. Must be a JSON array of arrays like [['s', 80, 'SKU-567']]")
-        
-        if not isinstance(parsed_variants, list) or not all(isinstance(v, list) and 3 <= len(v) <= 5 for v in parsed_variants):
-            raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3 to 5: [size_name, size, sku_no, color (optional), product_images (optional)]")
-
     submodel_schema = schemas.ProductSubModelUpdate(
-        image=None,
         is_active=is_active,
         box_weight=box_weight,
         box_dimension=box_dimension,
@@ -1572,32 +1543,104 @@ def update_product_submodel(
         carton_dimension=carton_dimension,
         
         # New variant fields stored on submodel
-        gs1_barcode=gs1_barcode,
         short_description=short_description,
         long_description=long_description,
-        carton_box_size=carton_box_size,
-        carton_barcode=carton_barcode,
         product_images=None,
-        finish=finish,
         certification=None,
         visor_type=visor_type,
         spoiler=spoiler,
-        chinstrap_lock=chinstrap_lock,
         pinlock=pinlock,
-        mrp=parsed_mrp
+        style=style
     )
     return ProductSubModelOperations.update_submodel(
         submodel_id=submodel_id,
         submodel=submodel_schema,
         name=name,
-        image_file=image,
         images=valid_images,
         certification=valid_certs,
-        parsed_variants=parsed_variants,
         current_user=current_user
     )
 
 
+
+@router.post("/variants/", response_model=dict, status_code=status.HTTP_201_CREATED)
+def create_product_variants(
+    submodel_id: str = Form(...),
+    variants: str = Form(...),
+    images: list[UploadFile] = File(default=[]),
+    current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
+):
+    import json
+    try:
+        parsed_variants = json.loads(variants)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid format for variants. Must be a JSON array of lists or objects.")
+    
+    if not isinstance(parsed_variants, list) or not all(
+        (isinstance(v, list) and 3 <= len(v) <= 5) or
+        (isinstance(v, dict) and "sku_no" in v and "size_name" in v and "size" in v)
+        for v in parsed_variants
+    ):
+        raise HTTPException(status_code=400, detail="Variants must be a list of lists of length 3 to 5 (e.g. [size_name, size, sku_no, color, product_images]) or objects containing 'sku_no', 'size_name', and 'size'.")
+
+    valid_images = []
+    if isinstance(images, list):
+        valid_images = [img for img in images if hasattr(img, "file") and getattr(img, "filename", None)]
+    elif hasattr(images, "file") and getattr(images, "filename", None):
+        valid_images = [images]
+
+    return ProductVariantOperations.create_variants_list(submodel_id, parsed_variants, valid_images, current_user)
+
+@router.put("/variants/{variant_id}", response_model=dict)
+def update_product_variant(
+    variant_id: str,
+    is_active: Optional[bool] = Form(None),
+    mrp: Optional[str] = Form(None),
+    carton_barcode: Optional[str] = Form(None),
+    gs1_barcode: Optional[str] = Form(None),
+    size: Optional[int] = Form(None),
+    size_name: Optional[str] = Form(None),
+    color: Optional[str] = Form(None),
+    finish: Optional[str] = Form(None),
+    images: Optional[list[UploadFile]] = File(default=None),
+    current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
+):
+    parsed_mrp = None
+    if mrp is not None:
+        mrp_str = str(mrp).strip()
+        if mrp_str.startswith("{") and mrp_str.endswith("}"):
+            import json
+            try:
+                parsed_mrp = json.loads(mrp_str)
+            except Exception:
+                parsed_mrp = {"INR": float(mrp_str)}
+        else:
+            try:
+                parsed_mrp = {"INR": float(mrp_str)}
+            except Exception:
+                parsed_mrp = None
+
+    valid_images = None
+    if images is not None:
+        valid_images = []
+        if isinstance(images, list):
+            valid_images = [img for img in images if hasattr(img, "file") and getattr(img, "filename", None)]
+        elif hasattr(images, "file") and getattr(images, "filename", None):
+            valid_images = [images]
+
+    update_schema = schemas.ProductVariantUpdate(
+        is_active=is_active,
+        gs1_barcode=gs1_barcode,
+        carton_barcode=carton_barcode,
+        color=color,
+        size_name=size_name,
+        size=size,
+        finish=finish,
+        product_images=None,
+        mrp=parsed_mrp
+    )
+
+    return ProductVariantOperations.update_variant(variant_id, update_schema, valid_images)
 
 @router.get("/variants/", response_model=dict)
 def get_product_variants(

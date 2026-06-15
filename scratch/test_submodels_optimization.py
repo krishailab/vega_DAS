@@ -4,7 +4,7 @@ import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api.product_api import ProductSubModelOperations
+from app.api.product_api import ProductSubModelOperations, ProductVariantOperations
 
 def test_get_submodels():
     print("Testing get_submodels execution and payload structure...")
@@ -14,19 +14,18 @@ def test_get_submodels():
     duration = time.perf_counter() - start_time
     
     # Assert pagination keys
-    assert "total" in res, "Expected 'total' in response"
+    assert "total_count" in res, "Expected 'total_count' in response"
     assert "page" in res, "Expected 'page' in response"
-    assert "limit" in res, "Expected 'limit' in response"
-    assert "pages" in res, "Expected 'pages' in response"
+    assert "total_pages" in res, "Expected 'total_pages' in response"
     assert "submodels" in res, "Expected 'submodels' in response"
     
     submodels = res["submodels"]
-    print(f"Retrieved {len(submodels)} submodels in {duration:.4f} seconds (Total in DB: {res['total']}).")
+    print(f"Retrieved {len(submodels)} submodels in {duration:.4f} seconds (Total in DB: {res['total_count']}).")
     
     if not submodels:
         print("No submodels found. Please ensure there is some data in the database.")
         return
-
+ 
     # Check the first submodel structure
     first_submodel = submodels[0]
     print(f"\nSubmodel ID: {first_submodel.get('submodel_id')}")
@@ -54,7 +53,7 @@ def test_get_submodels():
             print("✓ Success: Variant payload contains exactly the expected keys!")
     else:
         print("No nested variants found in this submodel to verify.")
-
+ 
 if __name__ == "__main__":
     test_get_submodels()
     
@@ -90,9 +89,15 @@ if __name__ == "__main__":
             image_file=None,
             images=["sub_img1.png"],
             certification=[],
+            current_user=admin_user
+        )
+        
+        variant_res = ProductVariantOperations.create_variants_list(
+            submodel_id=res["submodel_id"],
             parsed_variants=parsed_variants,
             current_user=admin_user
         )
+        res["variants"] = variant_res["variants"]
         
         submodel_id = res["submodel_id"]
         variants = res.get("variants", [])

@@ -745,86 +745,71 @@ class ProductBrandUpdate(BaseModel):
 class ProductModelCreate(BaseModel):
     name: str
     brand_id: str
-    category_id: str
+    category_id: Optional[str] = None
     subcategory_id: str
     is_active: bool = True
+    chinstrap_lock: Optional[str] = None
 
 class ProductModelUpdate(BaseModel):
     is_active: Optional[bool] = None
+    chinstrap_lock: Optional[str] = None
 
 class ProductSubModelCreate(BaseModel):
     name: str
     model_id: str
-    image: Optional[str] = None
     is_active: bool = True
     box_weight: Optional[float] = None
     box_dimension: Optional[str] = None
     carton_weight: Optional[float] = None
     carton_dimension: Optional[str] = None
     # Variant fields stored on submodel
-    gs1_barcode: Optional[str] = None
     short_description: Optional[str] = None
     long_description: Optional[str] = None
-    carton_box_size: Optional[int] = None
-    carton_barcode: Optional[str] = None
     product_images: list[str] = []
-    finish: Optional[str] = None
     certification: list[str] = []  # List of certification file URLs
     visor_type: Optional[str] = None
     spoiler: Optional[str] = None
-    chinstrap_lock: Optional[str] = None
     pinlock: Optional[str] = None
-    mrp: Optional[dict[str, float]] = None
+    style: Optional[str] = None
 
 class ProductSubModelUpdate(BaseModel):
-    image: Optional[str] = None
     is_active: Optional[bool] = None
     box_weight: Optional[float] = None
     box_dimension: Optional[str] = None
     carton_weight: Optional[float] = None
     carton_dimension: Optional[str] = None
-    gs1_barcode: Optional[str] = None
     short_description: Optional[str] = None
     long_description: Optional[str] = None
-    carton_box_size: Optional[int] = None
-    carton_barcode: Optional[str] = None
     product_images: Optional[list[str]] = None
-    finish: Optional[str] = None
     certification: Optional[list[str]] = None
     visor_type: Optional[str] = None
     spoiler: Optional[str] = None
-    chinstrap_lock: Optional[str] = None
     pinlock: Optional[str] = None
-    mrp: Optional[dict[str, float]] = None
+    style: Optional[str] = None
 
 class ProductVariantCreate(BaseModel):
     sku_no: str
     submodel_id: str
     gs1_barcode: Optional[str] = None
-    short_description: Optional[str] = None
-    long_description: Optional[str] = None
-    carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
-    product_images: list[str] = []
     color: Optional[str] = None
     size_name: Optional[str] = None
     size: Optional[int] = None
     finish: Optional[str] = None
-    certification: list[str] = []  # List of certification file URLs
-    visor_type: Optional[str] = None
-    spoiler: Optional[str] = None
-    chinstrap_lock: Optional[str] = None
-    pinlock: Optional[str] = None
+    product_images: list[str] = []
     mrp: Optional[dict[str, float]] = None
     is_active: bool = True
 
 class ProductVariantUpdate(BaseModel):
     is_active: Optional[bool] = None
-    mrp: Optional[dict[str, float]] = None
-    carton_box_size: Optional[int] = None
+    gs1_barcode: Optional[str] = None
     carton_barcode: Optional[str] = None
+    color: Optional[str] = None
+    size_name: Optional[str] = None
     size: Optional[int] = None
-    certification: Optional[list[str]] = None
+    finish: Optional[str] = None
+    product_images: Optional[list[str]] = None
+    mrp: Optional[dict[str, float]] = None
 
 
 class PlantBase(BaseModel):
