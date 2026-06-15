@@ -522,7 +522,7 @@ class B2BInwardOperations:
             "subcategories": sorted(list(used_subcategories.values()), key=lambda x: x["name"]),
             "brands": sorted(list(used_brands.values()), key=lambda x: x["name"]),
             "colors": sorted(list(used_colors)),
-            "sizes": sorted(list(used_sizes)),
+            "sizes": sorted(list(used_sizes), key=lambda x: (0, float(x)) if str(x).replace(".", "", 1).isdigit() else (1, str(x))),
             "size_names": sorted(list(used_size_names))
         }
 

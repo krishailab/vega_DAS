@@ -19,30 +19,30 @@ auth.RoleChecker.__call__ = lambda self, user=None: mock_user
 client = TestClient(app)
 
 endpoints = [
-    ("/api/products/categories", {}),
-    ("/api/products/subcategories", {}),
-    ("/api/products/brands", {}),
-    ("/api/products/models", {}),
-    ("/api/products/submodels", {}),
-    ("/api/products/variants", {}),
-    ("/api/assets/categories", {}),
-    ("/api/assets/subcategories", {}),
-    ("/api/assets/", {}),
-    ("/api/users/", {}),
-    ("/api/b2b-admin/dealers", {}),
-    ("/api/b2b-admin/coupons/", {}),
-    ("/api/b2b-admin/gst-settings/", {}),
-    ("/api/dealer-signups/requests", {}),
-    ("/api/jobcards/", {}),
-    ("/api/jobcards/JC0001/qrs-detailed", {}),
-    ("/api/scans/user-history/EMP26AAAA0001", {}),
-    ("/api/scans/my-history", {}),
+    ("/api/v1/product-master/categories/", {}),
+    ("/api/v1/product-master/subcategories/", {}),
+    ("/api/v1/product-master/brands/", {}),
+    ("/api/v1/product-master/models/", {}),
+    ("/api/v1/product-master/submodels/", {}),
+    ("/api/v1/product-master/variants/", {}),
+    ("/assets/categories", {}),
+    ("/assets/subcategories", {}),
+    ("/assets/", {}),
+    ("/users/", {}),
+    ("/api/v1/b2b-admin/dealers", {}),
+    ("/api/v1/b2b-admin/coupons/", {}),
+    ("/api/v1/b2b-admin/gst-settings/", {}),
+    ("/dealer-signups/requests", {}),
+    ("/jobcards/", {}),
+    ("/jobcards/JC0001/qrs-detailed", {}),
+    ("/scans/user-history/EMP26AAAA0001", {}),
+    ("/scans/my-history", {}),
     ("/api/parts", {}),
-    ("/api/stations", {}),
-    ("/api/processes", {}),
-    ("/api/plants", {}),
-    ("/api/shifts", {}),
-    ("/api/kiosks", {}),
+    ("/stations/", {}),
+    ("/api/process/", {}),
+    ("/api/plants/", {}),
+    ("/shifts/", {}),
+    ("/api/v1/kiosk/", {}),
 ]
 
 print("Starting endpoint validation tests...")
@@ -55,7 +55,6 @@ for url, params in endpoints:
         print(f"Status Code: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
-            # Preview keys and structure
             if isinstance(data, dict):
                 preview = {k: (f"list of length {len(v)}" if isinstance(v, list) else v) for k, v in data.items()}
                 print(f"Response (Standardised): {json.dumps(preview, indent=2)}")
