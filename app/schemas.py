@@ -106,6 +106,7 @@ class User(UserBase):
 
 class UserResponse(BaseModel):
     users: list[User]
+    page: int
     total_pages: int
     total_count: int
 
@@ -467,6 +468,7 @@ class JobCard(JobCardBase):
 
 class JobCardResponse(BaseModel):
     cards: list[JobCard]
+    page: int
     total_pages: int
     total_count: int
 

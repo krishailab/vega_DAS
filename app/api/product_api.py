@@ -38,11 +38,19 @@ class ProductCategoryOperations:
                 {"name": {"$regex": search, "$options": "i"}},
                 {"category_id": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_categories_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         categories = list(product_categories_collection.find(query).skip(skip).limit(limit))
         for c in categories:
             c.pop("_id", None)
-        return categories
+        return {
+            "categories": categories,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_category(category_id: str, category: schemas.ProductCategoryUpdate):
@@ -94,6 +102,9 @@ class ProductSubCategoryOperations:
                 {"subcategory_id": {"$regex": search, "$options": "i"}},
                 {"category_name": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_subcategories_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         subcategories = list(product_subcategories_collection.find(query).skip(skip).limit(limit))
         for s in subcategories:
@@ -102,7 +113,12 @@ class ProductSubCategoryOperations:
             s["category_name"] = category.get("name") if category else None
             s["category_status"] = category.get("is_active") if category else None
             s["category_is_active"] = category.get("is_active") if category else None
-        return subcategories
+        return {
+            "subcategories": subcategories,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_subcategory(subcategory_id: str, subcategory: schemas.ProductSubCategoryUpdate):
@@ -170,11 +186,19 @@ class ProductBrandOperations:
                 {"brand_id": {"$regex": search, "$options": "i"}},
                 {"description": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_brands_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         brands = list(product_brands_collection.find(query).skip(skip).limit(limit))
         for b in brands:
             b.pop("_id", None)
-        return brands
+        return {
+            "brands": brands,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_brand(
@@ -258,6 +282,9 @@ class ProductModelOperations:
                 {"category_name": {"$regex": search, "$options": "i"}},
                 {"subcategory_name": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_models_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         models = list(product_models_collection.find(query).skip(skip).limit(limit))
         for m in models:
@@ -280,7 +307,12 @@ class ProductModelOperations:
             m["subcategory_name"] = subcategory.get("name") if subcategory else None
             m["subcategory_status"] = subcategory.get("is_active") if subcategory else None
             m["subcategory_is_active"] = subcategory.get("is_active") if subcategory else None
-        return models
+        return {
+            "models": models,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_model(model_id: str, model: schemas.ProductModelUpdate):
@@ -538,11 +570,10 @@ class ProductSubModelOperations:
             s["variants"] = variants_by_submodel.get(s["submodel_id"], [])
             
         return {
-            "total": total_count,
+            "submodels": submodels,
             "page": page,
-            "limit": limit,
-            "pages": total_pages,
-            "submodels": submodels
+            "total_pages": total_pages,
+            "total_count": total_count
         }
 
     @staticmethod
@@ -840,6 +871,9 @@ class ProductVariantOperations:
                 {"color": {"$regex": search, "$options": "i"}},
                 {"size_name": {"$regex": search, "$options": "i"}}
             ]
+        total_count = product_variants_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         variants = list(product_variants_collection.find(query).skip(skip).limit(limit))
         
@@ -890,7 +924,12 @@ class ProductVariantOperations:
             v["subcategory_name"] = subcategory.get("name") if subcategory else None
             v["subcategory_status"] = subcategory.get("is_active") if subcategory else None
             v["subcategory_is_active"] = subcategory.get("is_active") if subcategory else None
-        return variants
+        return {
+            "variants": variants,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_variant(variant_id: str, variant: schemas.ProductVariantUpdate, images: List[Union[UploadFile, str]] = None, certification: List[Union[UploadFile, str]] = None):
@@ -1220,7 +1259,7 @@ def create_product_subcategory(
 ):
     return ProductSubCategoryOperations.create_subcategory(subcategory, current_user)
 
-@router.get("/subcategories/", response_model=List[dict])
+@router.get("/subcategories/", response_model=dict)
 def get_product_subcategories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
@@ -1247,7 +1286,7 @@ def create_product_brand(
 ):
     return ProductBrandOperations.create_brand(name, description, logo, is_active, current_user)
 
-@router.get("/brands/", response_model=List[dict])
+@router.get("/brands/", response_model=dict)
 def get_product_brands(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
@@ -1271,7 +1310,7 @@ def create_product_model(
 ):
     return ProductModelOperations.create_model(model, current_user)
 
-@router.get("/models/", response_model=List[dict])
+@router.get("/models/", response_model=dict)
 def get_product_models(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
@@ -1560,7 +1599,7 @@ def update_product_submodel(
 
 
 
-@router.get("/variants/", response_model=List[dict])
+@router.get("/variants/", response_model=dict)
 def get_product_variants(
     submodel_id: Optional[str] = None,
     page: int = Query(1, ge=1),

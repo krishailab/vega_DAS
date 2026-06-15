@@ -224,11 +224,19 @@ class KioskOperations:
                 {"apk_download_url": {"$regex": search, "$options": "i"}}
             ]
 
+        total_count = kiosks_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         kiosks = list(kiosks_collection.find(query).skip(skip).limit(limit))
         for k in kiosks:
             k.pop("_id", None)
-        return kiosks
+        return {
+            "kiosks": kiosks,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_kiosk(
@@ -360,7 +368,7 @@ def create_kiosk_config(
         logo, splash_image, is_update_mandatory, apk_download_url, master_admin_id, current_user
     )
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=dict)
 def get_all_kiosk_configs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

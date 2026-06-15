@@ -33,6 +33,9 @@ class ProcessOperations:
                 {"part_name": {"$regex": search, "$options": "i"}}
             ]
 
+        total_count = processes_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         processes = list(processes_collection.find(query).skip(skip).limit(limit))
         for p in processes:
@@ -42,10 +45,15 @@ class ProcessOperations:
                 part = parts_collection.find_one({"part_id": p["part_id"]})
                 if part:
                     p["part_name"] = part.get("name")
-        return processes
+        return {
+            "processes": processes,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
 
-@router.get("/", response_model=list[schemas.Process])
+@router.get("/", response_model=dict)
 def get_processes(
     part_id: Optional[str] = Query(None, description="Filter processes by part_id"),
     page: int = Query(1, ge=1),

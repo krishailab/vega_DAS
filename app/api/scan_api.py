@@ -1,5 +1,5 @@
 from typing import List, Union, Any
-from fastapi import APIRouter, Depends, HTTPException, status, Form, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, status, Form, File, UploadFile, Query
 import uuid
 import os
 import shutil
@@ -274,7 +274,7 @@ class ScanOperations:
         return updated
 
     @staticmethod
-    def get_user_history(user_id: str, current_user: dict):
+    def get_user_history(user_id: str, current_user: dict, page: int = 1, limit: int = 50):
         if current_user["role"] not in ["Super Admin", "Master Admin", "B2B Admin"]:
             if current_user["user_id"] != user_id:
                 raise HTTPException(status_code=403, detail="Access denied. You can only view your own history.")
@@ -369,7 +369,17 @@ class ScanOperations:
             history.append(d)
             
         history.sort(key=lambda x: x["start_time"] if x.get("start_time") else datetime.min, reverse=True)
-        return history
+        total_count = len(history)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
+        skip = (page - 1) * limit
+        paginated_history = history[skip:skip + limit]
+        return {
+            "history": paginated_history,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
             
     @staticmethod
     def check_qr(qr_id: str):
@@ -1467,12 +1477,21 @@ def get_dashboard_summary(current_user: dict = Depends(auth.get_current_user)):
     )
 
 @router.get("/user-history/{user_id}")
-def get_user_history(user_id: str, current_user: dict = Depends(auth.get_current_user)):
-    return ScanOperations.get_user_history(user_id, current_user)
+def get_user_history(
+    user_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1),
+    current_user: dict = Depends(auth.get_current_user)
+):
+    return ScanOperations.get_user_history(user_id, current_user, page=page, limit=limit)
 
 @router.get("/my-history")
-def get_my_history(current_user: dict = Depends(auth.get_current_user)):
-    return ScanOperations.get_user_history(current_user["user_id"], current_user)
+def get_my_history(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1),
+    current_user: dict = Depends(auth.get_current_user)
+):
+    return ScanOperations.get_user_history(current_user["user_id"], current_user, page=page, limit=limit)
 
 @router.get("/check/{qr_id}")
 def check_qr(qr_id: str):

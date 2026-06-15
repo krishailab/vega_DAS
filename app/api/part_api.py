@@ -69,11 +69,19 @@ class PartOperations:
                 {"part_id": {"$regex": search, "$options": "i"}},
                 {"category_name": {"$regex": search, "$options": "i"}}
             ]
+        total_count = parts_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         parts = list(parts_collection.find(query).skip(skip).limit(limit))
         for p in parts:
             p.pop("_id", None)
-        return parts
+        return {
+            "parts": parts,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_part(part_id: str, part: schemas.PartUpdate, current_user: dict):
@@ -149,7 +157,7 @@ def create_part(
 ):
     return PartOperations.create_part(part, current_user)
 
-@router.get("/parts/", response_model=list[schemas.Part])
+@router.get("/parts/", response_model=dict)
 def get_parts(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

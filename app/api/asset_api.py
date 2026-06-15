@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form, File, Uploa
 from typing import List, Optional
 import os
 import shutil
+import math
 from .. import schemas, auth, utils
 from ..database import (
     assets_collection,
@@ -125,10 +126,17 @@ class AssetOperations:
                 {"category_id": {"$regex": search, "$options": "i"}}
             ]
         skip = (page - 1) * limit
+        total_count = asset_categories_collection.count_documents(query)
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         categories = list(asset_categories_collection.find(query).skip(skip).limit(limit))
         for c in categories:
             c.pop("_id", None)
-        return categories
+        return {
+            "categories": categories,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def create_subcategory(subcategory: schemas.AssetSubCategoryCreate, current_user: dict):
@@ -165,10 +173,17 @@ class AssetOperations:
                 {"category_name": {"$regex": search, "$options": "i"}}
             ]
         skip = (page - 1) * limit
+        total_count = asset_subcategories_collection.count_documents(query)
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         subcategories = list(asset_subcategories_collection.find(query).skip(skip).limit(limit))
         for s in subcategories:
             s.pop("_id", None)
-        return subcategories
+        return {
+            "subcategories": subcategories,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     # ─── ASSET CRUD ───────────────────────────────────────────
 
@@ -298,8 +313,15 @@ class AssetOperations:
             ]
 
         skip = (page - 1) * limit
+        total_count = assets_collection.count_documents(query)
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         assets = list(assets_collection.find(query).skip(skip).limit(limit))
-        return [_enrich_asset(a) for a in assets]
+        return {
+            "assets": [_enrich_asset(a) for a in assets],
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_asset(asset_id, name, asset_no, model, brand, purchase_date, cost, category_id, subcategory_id, is_warranty, is_guarantee, warranty_expiry_date, color, guarantee_date, expire_date, comment, status, maintenance_period, invoice_pdf, new_images, current_user):
@@ -606,7 +628,7 @@ def create_category(
 ):
     return AssetOperations.create_category(category, current_user)
 
-@router.get("/categories", response_model=List[schemas.AssetCategory])
+@router.get("/categories", response_model=dict)
 def get_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
@@ -622,7 +644,7 @@ def create_subcategory(
 ):
     return AssetOperations.create_subcategory(subcategory, current_user)
 
-@router.get("/subcategories", response_model=List[schemas.AssetSubCategory])
+@router.get("/subcategories", response_model=dict)
 def get_subcategories(
     category_id: Optional[str] = None,
     page: int = Query(1, ge=1),

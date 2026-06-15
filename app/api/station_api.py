@@ -83,11 +83,19 @@ class StationOperations:
             else:
                 query["$or"] = search_filter
 
+        total_count = stations_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         stations = list(stations_collection.find(query).skip(skip).limit(limit))
         for s in stations:
             s.pop("_id", None)
-        return stations
+        return {
+            "stations": stations,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_station(station_id: str, station: schemas.StationUpdate, current_user: dict):
@@ -283,7 +291,7 @@ def create_station(
 ):
     return StationOperations.create_station(station, current_user)
 
-@router.get("/", response_model=list[schemas.Station])
+@router.get("/", response_model=dict)
 def get_stations(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

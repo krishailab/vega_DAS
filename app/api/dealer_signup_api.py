@@ -49,11 +49,19 @@ class DealerSignupOperations:
                 {"business_name": {"$regex": search, "$options": "i"}},
                 {"request_id": {"$regex": search, "$options": "i"}}
             ]
+        total_count = dealer_signup_requests_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         requests = list(dealer_signup_requests_collection.find(query).skip(skip).limit(limit))
         for r in requests:
             r.pop("_id", None)
-        return requests
+        return {
+            "requests": requests,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def get_request(request_id: str):
@@ -173,7 +181,7 @@ class DealerSignupOperations:
 def submit_signup_request(request: schemas.DealerSignupRequestCreate):
     return DealerSignupOperations.create_request(request)
 
-@router.get("/", response_model=list[schemas.DealerSignupRequest])
+@router.get("/", response_model=dict)
 def list_signup_requests(
     status: Optional[str] = None,
     page: int = Query(1, ge=1),

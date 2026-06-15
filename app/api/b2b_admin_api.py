@@ -546,7 +546,7 @@ class B2BCouponOperations:
         return coupon_dict
 
     @staticmethod
-    def get_coupons(page: int = 1, limit: int = 50, search: str = "") -> List[dict]:
+    def get_coupons(page: int = 1, limit: int = 50, search: str = "") -> dict:
         query = {}
         if search:
             query["$or"] = [
@@ -554,11 +554,19 @@ class B2BCouponOperations:
                 {"coupon_id": {"$regex": search, "$options": "i"}},
                 {"description": {"$regex": search, "$options": "i"}}
             ]
+        total_count = b2b_coupons_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         coupons = list(b2b_coupons_collection.find(query).skip(skip).limit(limit))
         for c in coupons:
             c.pop("_id", None)
-        return coupons
+        return {
+            "coupons": coupons,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def get_coupon(coupon_id: str) -> dict:
@@ -675,10 +683,10 @@ class B2BLimitsOperations:
         }
 
 
-@router.get("/dealers", response_model=List[schemas.User])
+@router.get("/dealers", response_model=dict)
 def get_all_dealers(
     search: Optional[str] = Query(None, description="Search by first name, last name, mobile or email"),
-    skip: int = Query(0, ge=0),
+    page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
@@ -691,11 +699,20 @@ def get_all_dealers(
             {"email": {"$regex": search, "$options": "i"}},
         ]
         
+    total_count = users_collection.count_documents(query)
+    import math
+    total_pages = math.ceil(total_count / limit) if limit > 0 else 0
+    skip = (page - 1) * limit
     dealers = list(users_collection.find(query).skip(skip).limit(limit).sort("created_at", -1))
     for dealer in dealers:
         dealer.pop("_id", None)
         
-    return dealers
+    return {
+        "dealers": dealers,
+        "page": page,
+        "total_pages": total_pages,
+        "total_count": total_count
+    }
 
 
 @router.get("/dealers/{dealer_id}/addresses", response_model=List[schemas.DealerCompanyAddressResponse])
@@ -796,7 +813,7 @@ def create_coupon(
     return B2BCouponOperations.create_coupon(coupon_data, current_user)
 
 
-@router.get("/coupons/", response_model=List[schemas.B2BCouponResponse])
+@router.get("/coupons/", response_model=dict)
 def get_coupons(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
@@ -882,18 +899,26 @@ class B2BGstSettingsOperations:
         return setting_dict
 
     @staticmethod
-    def get_settings(page: int = 1, limit: int = 50, search: str = "") -> List[dict]:
+    def get_settings(page: int = 1, limit: int = 50, search: str = "") -> dict:
         query = {}
         if search:
             query["$or"] = [
                 {"state": {"$regex": search, "$options": "i"}},
                 {"setting_id": {"$regex": search, "$options": "i"}}
             ]
+        total_count = b2b_gst_settings_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         settings = list(b2b_gst_settings_collection.find(query).skip(skip).limit(limit))
         for s in settings:
             s.pop("_id", None)
-        return settings
+        return {
+            "gst_settings": settings,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def get_setting(setting_id: str) -> dict:
@@ -956,7 +981,7 @@ def create_gst_setting(
     return B2BGstSettingsOperations.create_setting(setting_data, current_user)
 
 
-@router.get("/gst-settings/", response_model=List[schemas.B2BGstSettingResponse])
+@router.get("/gst-settings/", response_model=dict)
 def get_gst_settings(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

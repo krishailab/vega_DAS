@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submodel & Variant Upload Test</title>
+    <!-- Tailwind CSS CDN for rich styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen py-10 px-4">
+
+    <div class="max-w-3xl mx-auto bg-white p-8 rounded-xl shadow-md space-y-6">
+        <div class="border-b pb-4">
+            <h1 class="text-2xl font-bold text-gray-800">Create Submodel & Variants</h1>
+            <p class="text-sm text-gray-500 mt-1">Upload multiple variant images aligned with correct indexes
+                automatically.</p>
+        </div>
+
+        <form id="uploadForm" class="space-y-6">
+
+            <!-- General Submodel Inputs -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Submodel Name</label>
+                    <input type="text" id="name" value="FJUGUGU" required
+                        class="mt-1 block w-full p-2.5 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Model ID</label>
+                    <input type="text" id="modelId" value="PMOD26A0004" required
+                        class="mt-1 block w-full p-2.5 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                </div>
+            </div>
+
+            <!-- Variants Dynamic List Container -->
+            <div class="space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-semibold text-gray-700">Variants Configuration</h2>
+                    <button type="button" id="addVariantBtn"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition">+
+                        Add Variant</button>
+                </div>
+
+                <div id="variantsContainer" class="space-y-4">
+                    <!-- Default Row 1 -->
+                    <div class="variant-row p-4 bg-gray-50 border rounded-lg space-y-3 relative">
+                        <button type="button"
+                            class="remove-btn absolute top-2 right-2 text-red-500 hover:text-red-700 text-sm font-bold">&times;</button>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <input type="text" placeholder="Size Name (L)" required value="L"
+                                class="size-name p-2 border border-gray-300 rounded text-sm">
+                            <input type="text" placeholder="Size (10)" required value="10"
+                                class="size-val p-2 border border-gray-300 rounded text-sm">
+                            <input type="text" placeholder="SKU (GYGU56)" required value="GYGU56"
+                                class="sku-no p-2 border border-gray-300 rounded text-sm">
+                            <input type="text" placeholder="Color (WHITE)" required value="WHITE"
+                                class="color-val p-2 border border-gray-300 rounded text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-500">Upload Images for this
+                                Variant:</label>
+                            <input type="file" multiple class="variant-files mt-1 block w-full text-xs text-gray-500">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit"
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-md transition">
+                Submit Submodel with Variant Images
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const container = document.getElementById('variantsContainer');
+        const addBtn = document.getElementById('addVariantBtn');
+        const form = document.getElementById('uploadForm');
+
+        // Add row template
+        addBtn.addEventListener('click', () => {
+            const row = document.createElement('div');
+            row.className = 'variant-row p-4 bg-gray-50 border rounded-lg space-y-3 relative';
+            row.innerHTML = `
+        <button type="button" class="remove-btn absolute top-2 right-2 text-red-500 hover:text-red-700 text-sm font-bold">&times;</button>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <input type="text" placeholder="Size Name" required class="size-name p-2 border border-gray-300 rounded text-sm">
+          <input type="text" placeholder="Size" required class="size-val p-2 border border-gray-300 rounded text-sm">
+          <input type="text" placeholder="SKU" required class="sku-no p-2 border border-gray-300 rounded text-sm">
+          <input type="text" placeholder="Color" required class="color-val p-2 border border-gray-300 rounded text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500">Upload Images for this Variant:</label>
+          <input type="file" multiple class="variant-files mt-1 block w-full text-xs text-gray-500">
+        </div>
+      `;
+            container.appendChild(row);
+        });
+
+        // Remove row event delegation
+        container.addEventListener('click', (e) => {
+            if (e.target.classList.contains('remove-btn')) {
+                e.target.parentElement.remove();
+            }
+        });
+
+        // Form Submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData();
+            formData.append('name', document.getElementById('name').value);
+            formData.append('model_id', document.getElementById('modelId').value);
+
+            const rows = document.querySelectorAll('.variant-row');
+            const flatFiles = [];
+            const variantsData = [];
+            let fileIndex = 0;
+
+            rows.forEach((row) => {
+                const sizeName = row.querySelector('.size-name').value;
+                const size = row.querySelector('.size-val').value;
+                const skuNo = row.querySelector('.sku-no').value;
+                const color = row.querySelector('.color-val').value;
+
+                const fileInput = row.querySelector('.variant-files');
+                const variantImageUrls = [];
+
+                if (fileInput.files) {
+                    Array.from(fileInput.files).forEach((file) => {
+                        flatFiles.push(file);
+                        const ext = file.name.split('.').pop() || 'png';
+                        // Predict the server URL pattern:
+                        variantImageUrls.push(`product_image_${fileIndex}.${ext}`);
+                        fileIndex++;
+                    });
+                }
+
+                // Add formatted variant row: [sizeName, size, skuNo, color, variantImageUrls]
+                variantsData.push([sizeName, size, skuNo, color, variantImageUrls]);
+            });
+
+            // Append all flattened files to the single 'images' key
+            flatFiles.forEach((file) => {
+                formData.append('images', file);
+            });
+
+            // Add the serialized variants structure
+            formData.append('variants', JSON.stringify(variantsData));
+
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/submodels/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const resJson = await response.json();
+                    alert('Submodel and variants successfully created!');
+                    console.log(resJson);
+                } else {
+                    const errText = await response.text();
+                    alert('Error creating submodel: ' + errText);
+                    console.error(errText);
+                }
+            } catch (err) {
+                alert('Network/connection error.');
+                console.error(err);
+            }
+        });
+    </script>
+</body>
+
+</html>

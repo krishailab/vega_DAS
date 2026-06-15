@@ -220,6 +220,7 @@ class UserOperations:
         enriched_users = [UserOperations._enrich_user(u) for u in users]
         return {
             "users": enriched_users,
+            "page": page,
             "total_pages": total_pages,
             "total_count": total_count
         }

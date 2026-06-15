@@ -29,11 +29,19 @@ class ShiftOperations:
                 {"name": {"$regex": search, "$options": "i"}},
                 {"shift_id": {"$regex": search, "$options": "i"}}
             ]
+        total_count = shifts_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         shifts = list(shifts_collection.find(query).skip(skip).limit(limit))
         for s in shifts:
             s.pop("_id", None)
-        return shifts
+        return {
+            "shifts": shifts,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_shift(shift_id: str, shift: schemas.ShiftUpdate, current_user: dict):
@@ -70,7 +78,7 @@ def create_shift(
 ):
     return ShiftOperations.create_shift(shift, current_user)
 
-@router.get("/", response_model=list[schemas.Shift])
+@router.get("/", response_model=dict)
 def get_shifts(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),

@@ -884,6 +884,7 @@ class JobCardOperations:
 
         return {
             "cards": cards,
+            "page": page,
             "total_pages": total_pages,
             "total_count": total_count
         }

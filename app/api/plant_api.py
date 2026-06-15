@@ -29,11 +29,19 @@ class PlantOperations:
                 {"gstin": {"$regex": search, "$options": "i"}},
                 {"pincode": {"$regex": search, "$options": "i"}}
             ]
+        total_count = plants_collection.count_documents(query)
+        import math
+        total_pages = math.ceil(total_count / limit) if limit > 0 else 0
         skip = (page - 1) * limit
         plants = list(plants_collection.find(query).skip(skip).limit(limit))
         for p in plants:
             p.pop("_id", None)
-        return plants
+        return {
+            "plants": plants,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count
+        }
 
     @staticmethod
     def update_plant_status(plant_id: str, plant: schemas.PlantUpdate):
@@ -67,7 +75,7 @@ def create_plant(
     return PlantOperations.create_plant(plant)
 
 
-@router.get("/plants/", response_model=list[schemas.Plant])
+@router.get("/plants/", response_model=dict)
 def get_plants(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
