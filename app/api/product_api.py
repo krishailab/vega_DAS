@@ -1235,7 +1235,7 @@ def create_product_category(
 ):
     return ProductCategoryOperations.create_category(category, current_user)
 
-@router.get("/categories/", response_model=List[dict])
+@router.get("/categories/", response_model=dict)
 def get_product_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
