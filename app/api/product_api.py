@@ -1688,3 +1688,44 @@ def filter_product_variants(
     )
 
 
+@router.get("/variants/{variant_id}", response_model=dict)
+def get_product_variant(variant_id: str):
+    return ProductVariantOperations.get_variant_detail(variant_id)
+
+
+@router.get("/models/{model_id}", response_model=dict)
+def get_product_model(model_id: str):
+    doc = product_models_collection.find_one({"model_id": model_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Model not found")
+    doc.pop("_id", None)
+    brand = product_brands_collection.find_one({"brand_id": doc.get("brand_id")}) if doc.get("brand_id") else None
+    category = product_categories_collection.find_one({"category_id": doc.get("category_id")}) if doc.get("category_id") else None
+    subcategory = product_subcategories_collection.find_one({"subcategory_id": doc.get("subcategory_id")}) if doc.get("subcategory_id") else None
+    doc["brand_name"] = brand.get("name") if brand else None
+    doc["brand_image"] = brand.get("logo_url") if brand else None
+    doc["category_name"] = category.get("name") if category else None
+    doc["subcategory_name"] = subcategory.get("name") if subcategory else None
+    return doc
+
+
+@router.get("/submodels/{submodel_id}", response_model=dict)
+def get_product_submodel(submodel_id: str):
+    doc = product_submodels_collection.find_one({"submodel_id": submodel_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Submodel not found")
+    doc.pop("_id", None)
+    model = product_models_collection.find_one({"model_id": doc.get("model_id")}) if doc.get("model_id") else None
+    brand = product_brands_collection.find_one({"brand_id": model.get("brand_id")}) if model else None
+    category = product_categories_collection.find_one({"category_id": model.get("category_id")}) if model else None
+    subcategory = product_subcategories_collection.find_one({"subcategory_id": model.get("subcategory_id")}) if model else None
+    doc["model_name"] = model.get("name") if model else None
+    doc["model_is_active"] = model.get("is_active") if model else None
+    doc["brand_id"] = brand.get("brand_id") if brand else None
+    doc["brand_name"] = brand.get("name") if brand else None
+    doc["brand_image"] = brand.get("logo_url") if brand else None
+    doc["category_id"] = category.get("category_id") if category else None
+    doc["category_name"] = category.get("name") if category else None
+    doc["subcategory_id"] = subcategory.get("subcategory_id") if subcategory else None
+    doc["subcategory_name"] = subcategory.get("name") if subcategory else None
+    return doc
