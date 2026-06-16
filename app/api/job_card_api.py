@@ -1865,47 +1865,92 @@ class JobCardOperations:
             job_cards_collection
         )
         from ..firebase_client import update_rtdb
-        
+
         jobcard = job_cards_collection.find_one({"jobcard_id": jobcard_id})
         if not jobcard:
             raise HTTPException(status_code=404, detail="Job Card not found")
-            
-        # ── Build base filter (with optional search) ───────────────────────────
+
+        station_ids = jobcard.get("station_ids") or []
+        is_station_based = bool(station_ids)
+
+        # ── STATION-BASED (no-QR) jobcard ──────────────────────────────────────
+        if is_station_based:
+            # Fetch all scans attributed to this jobcard via station_jobcard_id
+            scan_filter: dict = {"station_jobcard_id": jobcard_id}
+            if search and search.strip():
+                scan_filter["qr_id"] = {"$regex": search.strip(), "$options": "i"}
+
+            all_scans = list(scanner_processes_collection.find(scan_filter).sort("start_time", 1))
+
+            # Group by process_name
+            processes: dict = {}
+            for s in all_scans:
+                s.pop("_id", None)
+                pname = s.get("process_name") or "Unknown"
+                if pname not in processes:
+                    processes[pname] = {
+                        "process_name": pname,
+                        "station_name": s.get("station_name"),
+                        "station_id": s.get("station_id"),
+                        "total_scans": 0,
+                        "okay_count": 0,
+                        "reject_count": 0,
+                        "unique_qr_ids": set(),
+                        "scans": []
+                    }
+                grp = processes[pname]
+                grp["total_scans"] += 1
+                if s.get("inspection_status") == "OKAY":
+                    grp["okay_count"] += 1
+                elif s.get("inspection_status") == "REJECTED":
+                    grp["reject_count"] += 1
+                if s.get("qr_id"):
+                    grp["unique_qr_ids"].add(s["qr_id"])
+                grp["scans"].append(s)
+
+            # Finalise
+            process_list = []
+            for grp in processes.values():
+                grp["unique_qr_count"] = len(grp.pop("unique_qr_ids"))
+                process_list.append(grp)
+
+            return {
+                "jobcard_id": jobcard_id,
+                "jobcard_no": jobcard.get("jobcard_no"),
+                "part_id": jobcard.get("part_id"),
+                "part_model": jobcard.get("part_model"),
+                "quantity": jobcard.get("quantity"),
+                "status": jobcard.get("status"),
+                "is_station_based": True,
+                "station_ids": station_ids,
+                "total_scans": len(all_scans),
+                "processes": process_list
+            }
+
+        # ── QR-BASED jobcard ────────────────────────────────────────────────────
         qr_filter: dict = {"jobcard_id": jobcard_id}
         if search and search.strip():
             qr_filter["qr_id"] = {"$regex": search.strip(), "$options": "i"}
 
-        # 1. Paginated QR retrieval
         total_qrs = qr_master_collection.count_documents(qr_filter)
-        
         if page < 1:
             page = 1
         if limit < 1:
             limit = 50
-            
         skip = (page - 1) * limit
         qrs = list(qr_master_collection.find(qr_filter).sort("qr_id", 1).skip(skip).limit(limit))
         qr_ids = [q["qr_id"] for q in qrs if q.get("qr_id")]
-        
-        # 2. Self-Healing check: see if any QR in this jobcard has been scanned
-        any_scanned = False
-        all_qrs_cursor = qr_master_collection.find({"jobcard_id": jobcard_id}, {"qr_id": 1})
-        all_qr_ids = [q["qr_id"] for q in all_qrs_cursor if q.get("qr_id")]
-        if all_qr_ids:
-            first_scan = scanner_processes_collection.find_one({"qr_id": {"$in": all_qr_ids}})
-            if first_scan:
-                any_scanned = True
-                
+
+        # Self-healing: promote CREATED → IN PROGRESS if any scan exists
         jc_status = jobcard.get("status", "CREATED")
-        if jc_status == "CREATED" and any_scanned:
-            jc_status = "IN PROGRESS"
-            job_cards_collection.update_one(
-                {"jobcard_id": jobcard_id},
-                {"$set": {"status": "IN PROGRESS"}}
-            )
-            update_rtdb(f"/job_cards/{jobcard_id}", {"status": "IN PROGRESS"})
-            
-        # 3. High-Performance Bulk Queries for paginated QRs
+        if jc_status == "CREATED" and qr_ids:
+            first_scan = scanner_processes_collection.find_one({"qr_id": {"$in": qr_ids}})
+            if first_scan:
+                jc_status = "IN PROGRESS"
+                job_cards_collection.update_one({"jobcard_id": jobcard_id}, {"$set": {"status": "IN PROGRESS"}})
+                update_rtdb(f"/job_cards/{jobcard_id}", {"status": "IN PROGRESS"})
+
+        # Bulk fetch ALL scans + assemblies + dispatches for these QRs
         all_scans = list(scanner_processes_collection.find({"qr_id": {"$in": qr_ids}})) if qr_ids else []
         all_assemblies = list(assembly_processes_collection.find({
             "$or": [{"component_ids": {"$in": qr_ids}}, {"qr_ids": {"$in": qr_ids}}]
@@ -1913,104 +1958,86 @@ class JobCardOperations:
         all_dispatches = list(dispatch_processes_collection.find({
             "$or": [{"qr_ids": {"$in": qr_ids}}, {"component_ids": {"$in": qr_ids}}]
         })) if qr_ids else []
-        
-        # Build In-Memory Grouping Maps
-        scans_by_qr = {}
+
+        # Group by qr_id in memory
+        scans_by_qr: dict = {}
         for s in all_scans:
-            qid = s.get("qr_id")
-            if qid:
-                scans_by_qr.setdefault(qid, []).append(s)
-                 
-        assemblies_by_qr = {}
+            scans_by_qr.setdefault(s.get("qr_id"), []).append(s)
+
+        assemblies_by_qr: dict = {}
         for a in all_assemblies:
-            qids = set()
-            if a.get("component_ids"):
-                for item in a["component_ids"]:
-                    if isinstance(item, list):
-                        qids.update(item)
-                    else:
-                        qids.add(item)
-            if a.get("qr_ids"):
-                for item in a["qr_ids"]:
-                    if isinstance(item, list):
-                        qids.update(item)
-                    else:
-                        qids.add(item)
+            qids = set(a.get("component_ids") or []) | set(a.get("qr_ids") or [])
             for qid in qids:
                 assemblies_by_qr.setdefault(qid, []).append(a)
-                 
-        dispatches_by_qr = {}
+
+        dispatches_by_qr: dict = {}
         for d in all_dispatches:
-            qids = set()
-            if d.get("qr_ids"):
-                for item in d["qr_ids"]:
-                    if isinstance(item, list):
-                        qids.update(item)
-                    else:
-                        qids.add(item)
-            if d.get("component_ids"):
-                for item in d["component_ids"]:
-                    if isinstance(item, list):
-                        qids.update(item)
-                    else:
-                        qids.add(item)
+            qids = set(d.get("qr_ids") or []) | set(d.get("component_ids") or [])
             for qid in qids:
                 dispatches_by_qr.setdefault(qid, []).append(d)
-                 
-        # Process each QR
+
+        # Build per-QR response, scans grouped by process_name
         qrs_detailed = []
         for q in qrs:
             qr_id = q["qr_id"]
-            
-            qr_scans = scans_by_qr.get(qr_id, [])
-            qr_asms = assemblies_by_qr.get(qr_id, [])
-            qr_dsps = dispatches_by_qr.get(qr_id, [])
-            
-            history = []
-            for s in qr_scans:
-                s_copy = dict(s)
-                s_copy.pop("_id", None)
-                s_copy["type"] = "Reader Process"
-                history.append(s_copy)
-                
-            for a in qr_asms:
-                a_copy = dict(a)
-                a_copy.pop("_id", None)
-                a_copy["type"] = "Assembly Process"
-                history.append(a_copy)
-                
-            for d in qr_dsps:
-                d_copy = dict(d)
-                d_copy.pop("_id", None)
-                d_copy["type"] = "Dispatch Process"
-                history.append(d_copy)
-                
-            # Chronological sort
-            history.sort(key=lambda x: x["start_time"] if x.get("start_time") else datetime.min)
-            
-            # Quality status from latest event
-            quality_status = "NOT SCANNED"
-            if history:
-                latest_event = history[-1]
-                quality_status = latest_event.get("inspection_status", "NOT SCANNED")
+            qr_scans = sorted(scans_by_qr.get(qr_id, []), key=lambda x: x.get("start_time") or datetime.min)
 
-            # Derive real-time status from history
-            db_status = q.get("status", "UNUSED")
-            if history:
-                effective_status = "IN USE"
-            elif db_status == "SCRAPPED":
-                effective_status = "SCRAPPED"
-            else:
-                effective_status = db_status
+            # Group scans by process_name
+            processes: dict = {}
+            for s in qr_scans:
+                s_copy = {k: v for k, v in s.items() if k != "_id"}
+                s_copy["type"] = "Reader Process"
+                pname = s_copy.get("process_name") or "Unknown"
+                if pname not in processes:
+                    processes[pname] = {
+                        "process_name": pname,
+                        "station_name": s_copy.get("station_name"),
+                        "station_id": s_copy.get("station_id"),
+                        "latest_status": None,
+                        "scan_count": 0,
+                        "okay_count": 0,
+                        "reject_count": 0,
+                        "scans": []
+                    }
+                grp = processes[pname]
+                grp["scan_count"] += 1
+                status_val = s_copy.get("inspection_status")
+                if status_val == "OKAY":
+                    grp["okay_count"] += 1
+                elif status_val == "REJECTED":
+                    grp["reject_count"] += 1
+                grp["latest_status"] = status_val  # last one wins (sorted by time)
+                grp["scans"].append(s_copy)
+
+            # Assembly + dispatch events
+            asm_events = []
+            for a in assemblies_by_qr.get(qr_id, []):
+                a_copy = {k: v for k, v in a.items() if k != "_id"}
+                a_copy["type"] = "Assembly Process"
+                asm_events.append(a_copy)
+            dsp_events = []
+            for d in dispatches_by_qr.get(qr_id, []):
+                d_copy = {k: v for k, v in d.items() if k != "_id"}
+                d_copy["type"] = "Dispatch Process"
+                dsp_events.append(d_copy)
+
+            # Derive QR status
+            all_events = qr_scans + asm_events + dsp_events
+            all_events_sorted = sorted(all_events, key=lambda x: x.get("start_time") or datetime.min)
+            quality_status = all_events_sorted[-1].get("inspection_status", "NOT SCANNED") if all_events_sorted else "NOT SCANNED"
+            effective_status = "IN USE" if all_events else (q.get("status") or "UNUSED")
 
             qrs_detailed.append({
                 "qr_id": qr_id,
                 "status": effective_status,
                 "quality_status": quality_status,
                 "created_at": q.get("created_at"),
-                "history": history
+                "process_count": len(processes),
+                "processes": list(processes.values()),
+                "assembly_events": asm_events,
+                "dispatch_events": dsp_events
             })
-            
+
         return {
             "jobcard_id": jobcard_id,
             "jobcard_no": jobcard.get("jobcard_no"),
@@ -2018,12 +2045,14 @@ class JobCardOperations:
             "part_model": jobcard.get("part_model"),
             "quantity": jobcard.get("quantity"),
             "status": jc_status,
+            "is_station_based": False,
             "total_qrs": total_qrs,
             "page": page,
             "limit": limit,
             "total_pages": (total_qrs + limit - 1) // limit if limit > 0 else 1,
             "qrs": qrs_detailed
         }
+
 
     @staticmethod
     def delete_qrs(qr_ids: list[str], current_user: dict):

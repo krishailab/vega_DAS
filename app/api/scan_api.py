@@ -1223,6 +1223,11 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
     # ── Station jobcard enrichment ─────────────────────────────────────────────
     # station_jobcard_id is persisted on the scan record at scan time.
     # Read it directly — no FIFO computation needed.
+    first_scan_for_jc: dict = {}
+    for sp in scans:
+        jcid = sp.get("station_jobcard_id")
+        if jcid and jcid not in first_scan_for_jc:
+            first_scan_for_jc[jcid] = sp
 
     # Bulk fetch all unique matched jobcard docs
     matched_jc_ids = list({
@@ -1261,6 +1266,16 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
             if not jc_doc:
                 continue
             jc_doc["type"] = "Job Card"
+
+            # Enrich with process_name + station_name from the referencing scan
+            ref_scan = first_scan_for_jc.get(jcid, {})
+            if not jc_doc.get("process_name") and ref_scan.get("process_name"):
+                jc_doc["process_name"] = ref_scan["process_name"]
+            if not jc_doc.get("station_name") and ref_scan.get("station_name"):
+                jc_doc["station_name"] = ref_scan["station_name"]
+            if not jc_doc.get("station_id") and ref_scan.get("station_id"):
+                jc_doc["station_id"] = ref_scan["station_id"]
+
             if not jc_doc.get("created_by_name"):
                 u = creator_map.get(jc_doc.get("created_by", ""))
                 if u:
