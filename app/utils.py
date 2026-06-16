@@ -114,28 +114,18 @@ def generate_dynamic_product_qr_ids(part_name: str, plant_id: str, amount: int) 
 
     prefix = f"{first_letter}{plant_code}{yy}"   # e.g. "SA26"
 
-    # 3. Find the highest numeric suffix already in use for this prefix
-    #    Using max instead of count makes this immune to gaps and duplicates.
-    _suffix_re = _re.compile(r'^' + _re.escape(prefix) + r'[A-Z]{3}(\d{4})$')
-    max_num = 0
-    for doc in qr_master_collection.find(
-        {"qr_id": {"$regex": f"^{prefix}"}},
-        {"qr_id": 1, "_id": 0}
-    ):
-        m = _suffix_re.match(doc["qr_id"])
-        if m:
-            n = int(m.group(1))
-            if n > max_num:
-                max_num = n
-
-    # Also find the max letter block (AAA, AAB, …)
+    # 3. Single scan: find max global index AND build existing set in one pass
     _letter_re = _re.compile(r'^' + _re.escape(prefix) + r'([A-Z]{3})(\d{4})$')
     max_letter_index = 0
+    existing: set[str] = set()
+
     for doc in qr_master_collection.find(
         {"qr_id": {"$regex": f"^{prefix}"}},
         {"qr_id": 1, "_id": 0}
     ):
-        m = _letter_re.match(doc["qr_id"])
+        qid = doc.get("qr_id", "")
+        existing.add(qid)
+        m = _letter_re.match(qid)
         if m:
             letters = m.group(1)           # e.g. "AAA"
             c1 = ord(letters[0]) - 65
@@ -143,22 +133,12 @@ def generate_dynamic_product_qr_ids(part_name: str, plant_id: str, amount: int) 
             c3 = ord(letters[2]) - 65
             li = c1 * 26 * 26 + c2 * 26 + c3
             num = int(m.group(2))
-            # Flatten to a single global index
             global_idx = li * 9999 + (num - 1)
             if global_idx > max_letter_index:
                 max_letter_index = global_idx
 
     # Start from the next index after the current maximum
     next_global = max_letter_index + 1
-
-    # Pre-load existing QR IDs for fast collision check
-    existing = set(
-        d["qr_id"]
-        for d in qr_master_collection.find(
-            {"qr_id": {"$regex": f"^{prefix}"}},
-            {"qr_id": 1, "_id": 0}
-        )
-    )
 
     ids: list[str] = []
     candidate_idx = next_global
@@ -184,13 +164,11 @@ def generate_dynamic_product_qr_ids(part_name: str, plant_id: str, amount: int) 
     return ids
 
 
+
 def get_currency_symbol(currency_code: str) -> str:
     if not currency_code:
         return "Rs."
-    # Standardize to uppercase
     code = currency_code.strip().upper()
-    
-    # Common currency symbols mapping
     symbols = {
         "INR": "Rs.",
         "USD": "$",

@@ -22,49 +22,49 @@ class ScanOperations:
         assigned_station_id = current_user.get("assigned_station_id")
         if not assigned_station_id:
             raise HTTPException(status_code=400, detail={"message": "You must assign a station before scanning", "color": "#6c757d"})
-            
+
         station = stations_collection.find_one({"station_id": assigned_station_id})
         if not station:
             raise HTTPException(status_code=400, detail={"message": "Assigned station not found", "color": "#6c757d"})
         process_name = station.get("process", "Unknown Process")
-            
+
         master_admin_id = current_user.get("master_admin_id") or current_user["user_id"]
-        
-        station_part_id = station.get("part_id")
-        if station_part_id:
-            qr_part_id = get_part_id(scan.qr_id)
-            if qr_part_id:
-                scanned_part = parts_collection.find_one({"part_id": qr_part_id})
-                is_box = scanned_part and scanned_part.get("name") == "BOX"
-                if not is_box and qr_part_id != station_part_id:
-                    raise HTTPException(status_code=403, detail={"message": "This Part does not belong to your work", "color": "#6c757d"})
 
-        latest_process = scanner_processes_collection.find_one(
-            {
-                "qr_id": scan.qr_id,
-                "process_name": process_name
-            },
-            sort=[("start_time", -1)]
-        )
-        
-        if latest_process:
-            status = latest_process.get("inspection_status")
-            if status == "OKAY":
-                raise HTTPException(status_code=400, detail={"message": f"Part has already successfully completed {process_name}", "color": "#ffc107"})
-            if status == "REJECTED":
-                raise HTTPException(status_code=400, detail={"message": f"Part was REJECTED during {process_name} and cannot be scanned again", "color": "#dc3545"})
-
-        # 2. Check product ownership and initialize if necessary
+        # ── Read 1: qr_master (single read, reused throughout) ───────────────
         qr_master = qr_master_collection.find_one({"qr_id": scan.qr_id})
         if not qr_master:
             raise HTTPException(status_code=400, detail={"message": "Invalid QR Code", "color": "#6c757d"})
 
+        qr_part_id = qr_master.get("part_id")
+
+        # ── Station part validation (reuse qr_part_id from qr_master) ────────
+        station_part_id = station.get("part_id")
+        if station_part_id and qr_part_id:
+            if qr_part_id != station_part_id:
+                # Check BOX exception — only read parts if types differ
+                scanned_part = parts_collection.find_one({"part_id": qr_part_id}, {"name": 1})
+                is_box = scanned_part and scanned_part.get("name") == "BOX"
+                if not is_box:
+                    raise HTTPException(status_code=403, detail={"message": "This Part does not belong to your work", "color": "#6c757d"})
+
+        # ── Read 2: latest scan for this QR at this process ──────────────────
+        latest_process = scanner_processes_collection.find_one(
+            {"qr_id": scan.qr_id, "process_name": process_name},
+            sort=[("start_time", -1)]
+        )
+        if latest_process:
+            st = latest_process.get("inspection_status")
+            if st == "OKAY":
+                raise HTTPException(status_code=400, detail={"message": f"Part has already successfully completed {process_name}", "color": "#ffc107"})
+            if st == "REJECTED":
+                raise HTTPException(status_code=400, detail={"message": f"Part was REJECTED during {process_name} and cannot be scanned again", "color": "#dc3545"})
+
+        # ── Read 3: product (check SCRAPPED / initialize) ─────────────────────
         product = products_collection.find_one({"qr_id": scan.qr_id})
         if product:
             if product.get("overall_status") == "SCRAPPED":
                 raise HTTPException(status_code=400, detail={"message": "Part is locked out: SCRAPPED", "color": "#dc3545"})
         else:
-            # Initialize Product
             product_doc = {
                 "qr_id": scan.qr_id,
                 "master_admin_id": master_admin_id,
@@ -73,58 +73,58 @@ class ScanOperations:
             }
             products_collection.insert_one(product_doc)
             sync_product(product_doc)
-            
-            # Update QR Master status
-            qr_master_collection.update_one(
-                {"qr_id": scan.qr_id},
-                {"$set": {"status": "IN USE"}}
-            )
+            qr_master_collection.update_one({"qr_id": scan.qr_id}, {"$set": {"status": "IN USE"}})
             update_rtdb(f"/qr_master/{scan.qr_id}", {"status": "IN USE"})
-            
-            # Update Job Card status
             if qr_master.get("jobcard_id"):
                 job_cards_collection.update_one(
                     {"jobcard_id": qr_master["jobcard_id"]},
                     {"$set": {"status": "IN PROGRESS"}}
                 )
                 update_rtdb(f"/job_cards/{qr_master['jobcard_id']}", {"status": "IN PROGRESS"})
- 
-        # 3. Global Check for REWORKED status
-        global_latest_scan = scanner_processes_collection.find_one({"qr_id": scan.qr_id}, sort=[("start_time", -1)])
-        global_latest_asm = assembly_processes_collection.find_one({"qr_ids": scan.qr_id}, sort=[("start_time", -1)])
-        
+
+        # ── Read 4: global latest for REWORKED/REJECTED check ────────────────
+        # Reuse latest_process for the scan side (already fetched above — it IS the global latest
+        # for this process; for a true global we need the unrestricted query)
+        global_latest_scan = scanner_processes_collection.find_one(
+            {"qr_id": scan.qr_id}, sort=[("start_time", -1)]
+        )
+        global_latest_asm = assembly_processes_collection.find_one(
+            {"qr_ids": scan.qr_id}, sort=[("start_time", -1)]
+        )
+
         global_latest = None
         if global_latest_scan and global_latest_asm:
             global_latest = global_latest_scan if global_latest_scan["start_time"] > global_latest_asm["start_time"] else global_latest_asm
         else:
             global_latest = global_latest_scan or global_latest_asm
- 
+
         if global_latest and global_latest.get("inspection_status") == "REJECTED":
             raise HTTPException(status_code=400, detail={"message": "Part is currently in REJECTED status and cannot proceed", "color": "#dc3545"})
- 
-        # 4. Close the scanner's previous open scan (end_time driven by next scan)
-        now = utils.get_current_time()
-        scanner_processes_collection.update_many(
-            {"scanner_id": current_user["user_id"], "end_time": None},
-            {"$set": {"end_time": now}}
-        )
 
-        # 5. Create new scan record
+        is_reworked = global_latest and global_latest.get("inspection_status") == "REWORKED"
+
+        # ── Resolve part_name from cached data (no extra DB call) ────────────
+        part_name = "Unknown Part"
+        if qr_part_id:
+            part_doc = parts_collection.find_one({"part_id": qr_part_id}, {"name": 1})
+            if part_doc:
+                part_name = part_doc.get("name", "Unknown Part")
+        elif qr_master.get("jobcard_id"):
+            jc = job_cards_collection.find_one({"jobcard_id": qr_master["jobcard_id"]}, {"part_model": 1})
+            if jc:
+                part_name = jc.get("part_model", "Unknown Part")
+
+        # ── Build scan record ─────────────────────────────────────────────────
+        now = utils.get_current_time()
         scan_dict = scan.model_dump() if hasattr(scan, "model_dump") else scan.dict()
         scan_dict["process_name"] = process_name
-        scan_dict["part_name"] = get_part_name(scan.qr_id)
+        scan_dict["part_name"] = part_name
         scan_dict["station_name"] = station.get("name", "Unknown Station")
         scan_dict["station_comment"] = station.get("comment")
         scan_dict["scan_id"] = utils.generate_custom_id("SCN", scanner_processes_collection, "scan_id")
-        scan_dict["station_id"] = current_user["assigned_station_id"]
+        scan_dict["station_id"] = assigned_station_id
         scan_dict["scanner_id"] = current_user["user_id"]
         scan_dict["scanner_name"] = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
-        
-        # Mark previous records as not latest
-        scanner_processes_collection.update_many({"qr_id": scan.qr_id}, {"$set": {"is_latest": False}})
-        assembly_processes_collection.update_many({"qr_ids": scan.qr_id}, {"$set": {"is_latest": False}})
-
-        is_reworked = global_latest and global_latest.get("inspection_status") == "REWORKED"
         scan_dict["inspection_status"] = "REWORKED" if is_reworked else "OKAY"
         scan_dict["is_latest"] = True
         scan_dict["start_time"] = now
@@ -135,15 +135,42 @@ class ScanOperations:
         scan_dict["plant_name"] = current_user.get("plant_name")
         scan_dict["plant_address"] = current_user.get("plant_address")
 
+        # ── Critical write: insert new scan record ────────────────────────────
         scanner_processes_collection.insert_one(scan_dict)
         scan_dict.pop("_id", None)
-        sync_scan(scan_dict)
+        sync_scan(scan_dict)  # already async via ThreadPoolExecutor
 
-        # Trigger background completion check to update job card metrics
-        if qr_master and qr_master.get("jobcard_id"):
+        # ── Background: bookkeeping writes that don't affect the response ─────
+        _scanner_id = current_user["user_id"]
+        _qr_id = scan.qr_id
+        _end_time = now
+
+        import threading
+        def _bg_bookkeeping():
+            # Close the scanner's previous open scan (end_time driven by next scan)
+            scanner_processes_collection.update_many(
+                {"scanner_id": _scanner_id, "end_time": None},
+                {"$set": {"end_time": _end_time}}
+            )
+            # Mark previous records as not latest
+            scanner_processes_collection.update_many({"qr_id": _qr_id, "is_latest": True}, {"$set": {"is_latest": False}})
+            assembly_processes_collection.update_many({"qr_ids": _qr_id, "is_latest": True}, {"$set": {"is_latest": False}})
+
+        threading.Thread(target=_bg_bookkeeping, daemon=True).start()
+
+        # ── Background: job card completion checks ────────────────────────────
+        # Step-1 jobcard (owns the QR directly) — individual check
+        if qr_master.get("jobcard_id"):
             _check_and_update_job_card_completion(qr_master["jobcard_id"])
 
+        # Step-2+ station-based jobcards — FIFO update for ALL jobcards at this
+        # station in one shot (avoids each seeing the full scan count independently)
+        if assigned_station_id:
+            _trigger_station_fifo(assigned_station_id)
+
         return scan_dict
+
+
 
     @staticmethod
     def inspect_part(qr_id: str, inspection_status: str, reject_reason: str, image: UploadFile, current_user: dict):
@@ -1474,110 +1501,207 @@ def _check_and_update_job_card_completion(jobcard_id: str):
     ).start()
 
 
+def _trigger_station_fifo(station_id: str):
+    """Trigger FIFO update for all station-based jobcards at this station (background)."""
+    import threading
+    threading.Thread(
+        target=_update_station_jobcards_fifo,
+        args=(station_id,),
+        daemon=True
+    ).start()
+
+
 def _check_and_update_job_card_completion_sync(jobcard_id: str):
     if not jobcard_id:
         return
-        
+
     job_card = job_cards_collection.find_one({"jobcard_id": jobcard_id})
     if not job_card:
         return
-        
-    # Get all QR IDs belonging to this job card
+
+    quantity = job_card.get("quantity", 0)
+    part_id = job_card.get("part_id")
+
+    # ── Path A: step-1 jobcard — QRs are owned by this jobcard ──────────────
     qr_cursor = qr_master_collection.find({"jobcard_id": jobcard_id}, {"qr_id": 1})
     qr_ids = [q["qr_id"] for q in qr_cursor]
-    
-    if not qr_ids:
+
+    if qr_ids:
+        # Find the last step (maximum step number) for this part
+        last_step_name = None
+        if part_id:
+            last_step_proc = processes_collection.find_one(
+                {"part_id": part_id},
+                sort=[("step", -1)]
+            )
+            if last_step_proc:
+                last_step_name = last_step_proc.get("name")
+
+        # Fast in-memory counting
+        all_scans = list(scanner_processes_collection.find(
+            {"qr_id": {"$in": qr_ids}},
+            {"qr_id": 1, "process_name": 1, "inspection_status": 1, "start_time": 1, "_id": 0}
+        ))
+        all_asms = list(assembly_processes_collection.find(
+            {"component_ids": {"$in": qr_ids}},
+            {"component_ids": 1, "process_name": 1, "inspection_status": 1, "start_time": 1, "_id": 0}
+        ))
+
+        # Track latest record per QR
+        latest_rec = {}
+        for s in all_scans:
+            qid = s.get("qr_id")
+            st = s.get("start_time")
+            if qid:
+                if qid not in latest_rec or (st and (not latest_rec[qid].get("start_time") or st > latest_rec[qid]["start_time"])):
+                    latest_rec[qid] = s
+        for a in all_asms:
+            st = a.get("start_time")
+            for qid in a.get("component_ids", []):
+                if qid not in latest_rec or (st and (not latest_rec[qid].get("start_time") or st > latest_rec[qid]["start_time"])):
+                    latest_rec[qid] = a
+
+        # Track OKAY at last step
+        has_okay_last = set()
+        for s in all_scans:
+            if s.get("process_name") == last_step_name and s.get("inspection_status") == "OKAY":
+                has_okay_last.add(s["qr_id"])
+        for a in all_asms:
+            if a.get("process_name") == last_step_name and a.get("inspection_status") == "OKAY":
+                for qid in a.get("component_ids", []):
+                    has_okay_last.add(qid)
+
+        prod_statuses = {}
+        for prod in products_collection.find({"qr_id": {"$in": qr_ids}}, {"qr_id": 1, "overall_status": 1, "_id": 0}):
+            prod_statuses[prod["qr_id"]] = prod.get("overall_status")
+
+        finished_count = 0
+        for qid in qr_ids:
+            latest = latest_rec.get(qid)
+            if latest and latest.get("inspection_status") == "REJECTED":
+                finished_count += 1
+                continue
+            if last_step_name:
+                if qid in has_okay_last:
+                    finished_count += 1
+                    continue
+            else:
+                if latest and latest.get("inspection_status") == "OKAY" and latest.get("assembly_id"):
+                    finished_count += 1
+                    continue
+            if prod_statuses.get(qid) in ["CYCLE COMPLETE", "DISPATCHED", "SCRAPPED"]:
+                finished_count += 1
+
+        from .job_card_api import JobCardOperations
+        details = JobCardOperations.get_jobcard_completion_details(jobcard_id, quantity, part_id)
+
+        update_fields = {
+            "completion_percentage": details["completion_percentage"],
+            "process_wise_completion": details["process_wise_completion"]
+        }
+        if finished_count >= quantity and quantity > 0:
+            update_fields["status"] = "COMPLETED"
+            update_rtdb(f"/job_cards/{jobcard_id}", {"status": "COMPLETED"})
+
+        job_cards_collection.update_one({"jobcard_id": jobcard_id}, {"$set": update_fields})
         return
 
-    # Find the last step (maximum step number) for this part
-    part_id = job_card.get("part_id")
-    last_step_name = None
-    if part_id:
-        from ..database import processes_collection
-        last_step_proc = processes_collection.find_one(
-            {"part_id": part_id},
-            sort=[("step", -1)]
-        )
-        if last_step_proc:
-            last_step_name = last_step_proc.get("name")
-        
-    # Fast in-memory counting instead of querying 5 times per QR code (N+1 query problem):
-    all_scans = list(scanner_processes_collection.find(
-        {"qr_id": {"$in": qr_ids}},
-        {"qr_id": 1, "process_name": 1, "inspection_status": 1, "start_time": 1, "_id": 0}
-    ))
-    all_asms = list(assembly_processes_collection.find(
-        {"component_ids": {"$in": qr_ids}},
-        {"component_ids": 1, "process_name": 1, "inspection_status": 1, "start_time": 1, "_id": 0}
-    ))
-    
-    # Track the latest record per QR
-    latest_rec = {}
-    for s in all_scans:
-        qid = s.get("qr_id")
-        st = s.get("start_time")
-        if qid:
-            if qid not in latest_rec or not st or not latest_rec[qid].get("start_time") or st > latest_rec[qid]["start_time"]:
-                latest_rec[qid] = s
+    # ── Path B: station-based jobcard — delegate to FIFO updater ────────────
+    # Multiple jobcards can share the same station_ids. We must NOT update just
+    # this one in isolation — that causes all of them to see the same total scan
+    # count and all get marked completed at once. Instead, hand off to the FIFO
+    # function which updates ALL jobcards at those stations in creation order.
+    station_ids = job_card.get("station_ids") or []
+    if not station_ids:
+        return
 
-    for a in all_asms:
-        st = a.get("start_time")
-        for qid in a.get("component_ids", []):
-            if qid not in latest_rec or not st or not latest_rec[qid].get("start_time") or st > latest_rec[qid]["start_time"]:
-                latest_rec[qid] = a
+    # FIFO updater handles all jobcards at these stations together
+    for sid in station_ids:
+        _update_station_jobcards_fifo(sid)
 
-    # Track OKAY status at the last step
-    has_okay_last = set()
-    for s in all_scans:
-        if s.get("process_name") == last_step_name and s.get("inspection_status") == "OKAY":
-            has_okay_last.add(s["qr_id"])
-    for a in all_asms:
-        if a.get("process_name") == last_step_name and a.get("inspection_status") == "OKAY":
-            for qid in a.get("component_ids", []):
-                has_okay_last.add(qid)
 
-    # Check for terminal statuses in products collection
-    prod_statuses = {}
-    for prod in products_collection.find({"qr_id": {"$in": qr_ids}}, {"qr_id": 1, "overall_status": 1, "_id": 0}):
-        prod_statuses[prod["qr_id"]] = prod.get("overall_status")
+def _update_station_jobcards_fifo(station_id: str):
+    """
+    FIFO queue model for station-based (step-2+) jobcards.
 
-    finished_count = 0
-    for qid in qr_ids:
-        # Check rejection
-        latest = latest_rec.get(qid)
-        if latest and latest.get("inspection_status") == "REJECTED":
-            finished_count += 1
-            continue
-            
-        # Check last step completion
-        if last_step_name:
-            if qid in has_okay_last:
-                finished_count += 1
-                continue
-        else:
-            # Fallback
-            if latest and latest.get("inspection_status") == "OKAY" and latest.get("assembly_id"):
-                finished_count += 1
-                continue
+    All jobcards sharing the same station_id are sorted by created_at ascending.
+    The oldest open jobcard fills first. The next jobcard only gets credit for
+    scans BEYOND the cumulative quantity of all preceding jobcards.
 
-        # Check terminal status in product record
-        if prod_statuses.get(qid) in ["CYCLE COMPLETE", "DISPATCHED", "SCRAPPED"]:
-            finished_count += 1
-
-    # Calculate completion percentage and process-wise completion fields at write time
-    from .job_card_api import JobCardOperations
-    details = JobCardOperations.get_jobcard_completion_details(jobcard_id, job_card.get("quantity", 0), part_id)
-
-    update_fields = {
-        "completion_percentage": details["completion_percentage"],
-        "process_wise_completion": details["process_wise_completion"]
-    }
-    if finished_count >= job_card.get("quantity", 0):
-        update_fields["status"] = "COMPLETED"
-        update_rtdb(f"/job_cards/{jobcard_id}", {"status": "COMPLETED"})
-
-    job_cards_collection.update_one(
-        {"jobcard_id": jobcard_id},
-        {"$set": update_fields}
+    Example: 4 jobcards at STA001 with qty [4, 2, 2, 2], 2 total OKAY scans:
+      JBC-A (oldest, qty 4): gets min(2, 4) = 2  → 50%  IN PROGRESS
+      JBC-B (qty 2):         gets min(2-4, 2) = 0 → 0%   CREATED
+      JBC-C (qty 2):         gets 0              → 0%   CREATED
+      JBC-D (qty 2):         gets 0              → 0%   CREATED
+    """
+    # 1. Station → process name
+    station_doc = stations_collection.find_one(
+        {"station_id": station_id},
+        {"process": 1, "_id": 0}
     )
+    if not station_doc:
+        return
+    process_name = station_doc.get("process")
+    if not process_name:
+        return
+
+    # 2. All jobcards for this station, oldest first
+    all_jcs = list(
+        job_cards_collection.find(
+            {"station_ids": station_id},
+            {"jobcard_id": 1, "quantity": 1, "created_at": 1, "status": 1, "part_id": 1}
+        ).sort("created_at", 1)
+    )
+    if not all_jcs:
+        return
+
+    # 3. Count total unique OKAY QRs at this station (all time)
+    okay_qr_ids: set = set()
+    for doc in scanner_processes_collection.find(
+        {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
+        {"qr_id": 1, "_id": 0}
+    ):
+        if doc.get("qr_id"):
+            okay_qr_ids.add(doc["qr_id"])
+    for doc in assembly_processes_collection.find(
+        {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
+        {"component_ids": 1, "_id": 0}
+    ):
+        for qid in doc.get("component_ids", []):
+            okay_qr_ids.add(qid)
+
+    total_okay = len(okay_qr_ids)
+
+    # 4. FIFO assignment — fill oldest jobcard first
+    cumulative = 0
+    for jc in all_jcs:
+        qty = jc.get("quantity") or 0
+        if qty <= 0:
+            continue
+
+        # How many of the total scans belong to this jobcard's slot?
+        finished = max(0, min(total_okay - cumulative, qty))
+        pct = round((finished / qty) * 100, 2)
+
+        update_fields = {"completion_percentage": pct}
+        current_status = jc.get("status", "CREATED")
+
+        if finished >= qty:
+            if current_status != "COMPLETED":
+                update_fields["status"] = "COMPLETED"
+                update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "COMPLETED"})
+        elif finished > 0:
+            if current_status == "CREATED":
+                update_fields["status"] = "IN PROGRESS"
+                update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "IN PROGRESS"})
+        else:
+            # No scans yet for this slot — keep status unchanged
+            pass
+
+        job_cards_collection.update_one(
+            {"jobcard_id": jc["jobcard_id"]},
+            {"$set": update_fields}
+        )
+
+        cumulative += qty
 

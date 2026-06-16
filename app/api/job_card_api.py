@@ -5,6 +5,7 @@ import io
 import math
 import re
 from datetime import datetime
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 import os
 import urllib.request
 import qrcode
@@ -13,7 +14,7 @@ from barcode.writer import ImageWriter
 
 from .. import schemas, auth, utils
 from ..database import job_cards_collection, qr_master_collection, parts_collection, users_collection, product_variants_collection, product_models_collection, product_submodels_collection, product_brands_collection, product_subcategories_collection, product_categories_collection, scanner_processes_collection
-from ..firebase_client import sync_job_card, sync_qr_master, sync_qr_masters_batch, update_rtdb
+from ..firebase_client import sync_job_card, sync_qr_master, sync_qr_masters_batch, update_rtdb, delete_from_rtdb, escape_firebase_key
 
 # Imports for physical thermal label printing
 from reportlab.pdfgen import canvas
@@ -438,7 +439,6 @@ class JobCardOperations:
         jobcard_dict["created_at"] = now
         jobcard_dict["status"] = "CREATED"
         
-        from pymongo.errors import DuplicateKeyError
         inserted = False
         attempts = 0
         while not inserted and attempts < 5:
@@ -464,28 +464,88 @@ class JobCardOperations:
 
         jobcard_dict.pop("_id", None)
         sync_job_card(jobcard_dict)
-        
+
         if JobCardOperations._get_current_process_step(current_user) == 1:
-            part_name = part.get("name", "PRODUCT")
-            plant_id = current_user.get("plant_id") or "PLT26AAAA0001"
-            qr_ids = utils.generate_dynamic_product_qr_ids(part_name, plant_id, job_card.quantity)
-            qr_records = []
-            for qr_id in qr_ids:
-                qr_records.append({
-                    "qr_id": qr_id,
-                    "jobcard_id": jobcard_dict["jobcard_id"],
-                    "part_id": jobcard_dict["part_id"],
-                    "master_admin_id": current_user["user_id"],
-                    "status": "UNUSED",
-                    "created_at": now
-                })
-                
-            if qr_records:
-                qr_master_collection.insert_many(qr_records)
-                sync_qr_masters_batch(qr_records)
-                
-            JobCardOperations._perform_auto_scan_for_jobcard(jobcard_dict, qr_ids, current_user)
-            
+            # Run QR generation + DB insert in background so the API returns instantly
+            import threading
+
+            _jc_snapshot = dict(jobcard_dict)   # capture before any mutation
+            _user_snapshot = dict(current_user)
+            _quantity = job_card.quantity
+            _auto_scan = bool(jobcard_dict.get("auto_scan"))
+
+            def _bg_generate_qrs():
+                import logging
+                _log = logging.getLogger(__name__)
+
+                part_name_bg = part.get("name", "PRODUCT")
+                plant_id_bg = _user_snapshot.get("plant_id") or "PLT26AAAA0001"
+
+                # Use a local `remaining` so we never reassign the closure-captured _quantity
+                remaining = _quantity
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        qr_ids_bg = utils.generate_dynamic_product_qr_ids(
+                            part_name_bg, plant_id_bg, remaining
+                        )
+                        now_bg = utils.get_current_time()
+                        qr_records_bg = [
+                            {
+                                "qr_id": qr_id,
+                                "jobcard_id": _jc_snapshot["jobcard_id"],
+                                "part_id": _jc_snapshot["part_id"],
+                                "master_admin_id": _user_snapshot["user_id"],
+                                "status": "UNUSED",
+                                "created_at": now_bg,
+                            }
+                            for qr_id in qr_ids_bg
+                        ]
+
+                        if qr_records_bg:
+                            qr_master_collection.insert_many(qr_records_bg, ordered=False)
+                            sync_qr_masters_batch(qr_records_bg)
+
+                        if _auto_scan:
+                            JobCardOperations._perform_auto_scan_for_jobcard(
+                                _jc_snapshot, qr_ids_bg, _user_snapshot
+                            )
+                        return  # success
+
+                    except BulkWriteError as bwe:
+                        # Some QR IDs collided with a concurrent insert.
+                        # Identify failed ones, sync the good ones, retry only the missing count.
+                        write_errors = bwe.details.get("writeErrors", [])
+                        failed_qr_ids = {
+                            qr_records_bg[e["index"]]["qr_id"]
+                            for e in write_errors
+                            if e.get("code") == 11000  # duplicate key
+                        }
+                        _log.warning(
+                            "Jobcard %s QR generation attempt %d: %d duplicates — retrying %d",
+                            _jc_snapshot.get("jobcard_id"), attempt + 1,
+                            len(failed_qr_ids), len(failed_qr_ids)
+                        )
+                        good_records = [r for r in qr_records_bg if r["qr_id"] not in failed_qr_ids]
+                        if good_records:
+                            sync_qr_masters_batch(good_records)
+
+                        remaining = len(failed_qr_ids)  # only re-generate what's missing
+                        if attempt == max_retries - 1:
+                            _log.error(
+                                "Jobcard %s: QR generation failed after %d attempts (%d QRs missing)",
+                                _jc_snapshot.get("jobcard_id"), max_retries, remaining
+                            )
+
+                    except Exception:
+                        _log.exception(
+                            "Background QR generation failed for jobcard %s (attempt %d)",
+                            _jc_snapshot.get("jobcard_id"), attempt + 1
+                        )
+                        return
+
+            threading.Thread(target=_bg_generate_qrs, daemon=True).start()
+
         return jobcard_dict
 
     @staticmethod
@@ -924,13 +984,21 @@ class JobCardOperations:
             
         # 3. Delete job card itself
         job_cards_collection.delete_one({"jobcard_id": jobcard_id})
-        
-        # 4. Clean up Firebase
-        from ..firebase_client import delete_from_rtdb, escape_firebase_key
-        delete_from_rtdb(f"/job_cards/{jobcard_id}")
-        for qr_id in qr_ids:
-            delete_from_rtdb(f"/qr_master/{escape_firebase_key(qr_id)}")
-            
+
+        # 4. Clean up Firebase in background — don't block the HTTP response
+        #    (per-QR delete loop was doing one HTTP call per QR synchronously)
+        import threading
+
+        _qr_ids_snapshot = list(qr_ids)
+        _jobcard_id_snapshot = jobcard_id
+
+        def _bg_firebase_cleanup():
+            delete_from_rtdb(f"/job_cards/{_jobcard_id_snapshot}")
+            for qr_id in _qr_ids_snapshot:
+                delete_from_rtdb(f"/qr_master/{escape_firebase_key(qr_id)}")
+
+        threading.Thread(target=_bg_firebase_cleanup, daemon=True).start()
+
         return {"detail": "Job Card and all associated QR codes/scans deleted successfully"}
 
     @staticmethod
@@ -1208,7 +1276,6 @@ class JobCardOperations:
             "auto_scan": getattr(job_card, "auto_scan", False)
         }
 
-        from pymongo.errors import DuplicateKeyError
         inserted = False
         attempts = 0
         while not inserted and attempts < 5:
