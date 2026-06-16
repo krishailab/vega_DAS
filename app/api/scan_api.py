@@ -102,45 +102,6 @@ class ScanOperations:
         if global_latest and global_latest.get("inspection_status") == "REJECTED":
             raise HTTPException(status_code=400, detail={"message": "Part is currently in REJECTED status and cannot proceed", "color": "#dc3545"})
  
-        # 3b. Step-wise validation
-        is_reworked = global_latest and global_latest.get("inspection_status") == "REWORKED"
-        
-        qr_part_id = get_part_id(scan.qr_id)
-        scanned_part = parts_collection.find_one({"part_id": qr_part_id}) if qr_part_id else None
-        is_box_qr = scanned_part and scanned_part.get("name") == "BOX"
- 
-        if not is_reworked and not is_box_qr:
-            part_id = station.get("part_id")
-            if part_id:
-                process_doc = processes_collection.find_one({"name": process_name.strip(), "part_id": part_id})
-                if process_doc and process_doc.get("step") and process_doc["step"] > 1:
-                    prev_step = process_doc["step"] - 1
-                    prev_process = processes_collection.find_one({"part_id": part_id, "step": prev_step})
-                    if prev_process:
-                        prev_process_name = prev_process["name"]
-                        
-                        has_completed_prev = scanner_processes_collection.find_one({
-                            "qr_id": scan.qr_id,
-                            "process_name": prev_process_name,
-                            "inspection_status": "OKAY"
-                        })
-                        
-                        if not has_completed_prev:
-                            has_completed_prev = assembly_processes_collection.find_one({
-                                "component_ids": scan.qr_id,
-                                "process_name": prev_process_name,
-                                "inspection_status": "OKAY"
-                            })
-                            
-                        if not has_completed_prev:
-                            raise HTTPException(
-                                status_code=400,
-                                detail={
-                                    "message": f"Step Validation Failed: Part must complete step {prev_step} ({prev_process_name}) successfully before starting {process_name}.",
-                                    "color": "#fd7e14"
-                                }
-                            )
-
         # 4. Close the scanner's previous open scan (end_time driven by next scan)
         now = utils.get_current_time()
         scanner_processes_collection.update_many(
