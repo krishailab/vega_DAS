@@ -135,6 +135,17 @@ class ScanOperations:
         scan_dict["plant_name"] = current_user.get("plant_name")
         scan_dict["plant_address"] = current_user.get("plant_address")
 
+        # ── Resolve station-based jobcard (single indexed lookup) ──────────────
+        # is_active flag is maintained by _update_station_jobcards_fifo in background.
+        # Resolved BEFORE insert so it's persisted to DB — history endpoint reads it directly.
+        if assigned_station_id:
+            active_st_jc = job_cards_collection.find_one(
+                {"station_ids": assigned_station_id, "is_active": True},
+                {"jobcard_id": 1}
+            )
+            if active_st_jc:
+                scan_dict["station_jobcard_id"] = active_st_jc["jobcard_id"]
+
         # ── Critical write: insert new scan record ────────────────────────────
         scanner_processes_collection.insert_one(scan_dict)
         scan_dict.pop("_id", None)
@@ -158,17 +169,6 @@ class ScanOperations:
 
         threading.Thread(target=_bg_bookkeeping, daemon=True).start()
 
-        # ── Resolve station-based jobcard for this scan (single indexed lookup) ─
-        # is_active=True is maintained by _update_station_jobcards_fifo (background).
-        # This replaces the expensive FIFO calculation with O(1) DB lookup.
-        if assigned_station_id:
-            active_st_jc = job_cards_collection.find_one(
-                {"station_ids": assigned_station_id, "is_active": True},
-                {"jobcard_id": 1}
-            )
-            if active_st_jc:
-                scan_dict["station_jobcard_id"] = active_st_jc["jobcard_id"]
-
         # ── Background: job card completion checks ────────────────────────────
         # Step-1 jobcard (owns the QR directly) — individual check
         if qr_master.get("jobcard_id"):
@@ -180,7 +180,6 @@ class ScanOperations:
             _trigger_station_fifo(assigned_station_id)
 
         return scan_dict
-
 
 
     @staticmethod
@@ -1106,14 +1105,15 @@ def get_qr_detail_nested(qid, current_asm=None):
 
 def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
     
+    # ── Fetch qr_master + product in parallel (both needed below) ────────────
     product = products_collection.find_one({"qr_id": qr_id})
     qr_master = qr_master_collection.find_one({"qr_id": qr_id})
-    
+
     if not product and not qr_master:
         exists_in_asm = assembly_processes_collection.find_one({"component_ids": qr_id})
         if not exists_in_asm:
-            return None, None, None
-        
+            return None, None, [], []
+
     created_at = None
     if product:
         created_at = product.get("created_at")
@@ -1123,10 +1123,18 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
         first_link = assembly_processes_collection.find_one({"component_ids": qr_id}, sort=[("start_time", 1)])
         created_at = first_link.get("start_time") if first_link else None
 
+    # ── Resolve part_id / part_name directly from qr_master (no extra queries) ─
+    qr_part_id = qr_master.get("part_id") if qr_master else None
+    part_name = "Unknown Part"
+    if qr_part_id:
+        part_doc = parts_collection.find_one({"part_id": qr_part_id}, {"name": 1})
+        if part_doc:
+            part_name = part_doc.get("name", "Unknown Part")
+
     product_info = {
         "qr_id": qr_id,
-        "part_id": get_part_id(qr_id),
-        "part_name": get_part_name(qr_id),
+        "part_id": qr_part_id,
+        "part_name": part_name,
         "created_at": created_at
     }
 
@@ -1181,92 +1189,42 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
             if job_card_entry:
                 product_info["model_name"] = job_card_entry.get("model_name")
                 product_info["product_model_name"] = job_card_entry.get("product_model_name")
-                # Also expose product_model_name on the job card history entry itself
                 if job_card_entry.get("product_model_name") and "product_model_name" not in job_card_entry:
                     job_card_entry["product_model_name"] = job_card_entry.get("product_model_name")
 
 
     scans = list(scanner_processes_collection.find({"qr_id": qr_id}))
+
+    # ── Batch-resolve all scanner / inspector names in ONE query ──────────────
+    user_ids_needed: set = set()
+    for sp in scans:
+        if not sp.get("scanner_name") and sp.get("scanner_id"):
+            user_ids_needed.add(sp["scanner_id"])
+        if sp.get("inspector_id") and not sp.get("inspector_name"):
+            user_ids_needed.add(sp["inspector_id"])
+
+    name_map: dict = {}
+    if user_ids_needed:
+        for u in users_collection.find(
+            {"user_id": {"$in": list(user_ids_needed)}},
+            {"user_id": 1, "first_name": 1, "last_name": 1}
+        ):
+            name_map[u["user_id"]] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+
     for sp in scans:
         sp.pop("_id", None)
         sp["type"] = "Reader Process"
-        if not sp.get("scanner_name"):
-            sp["scanner_name"] = get_name(sp.get("scanner_id"))
+        if not sp.get("scanner_name") and sp.get("scanner_id"):
+            sp["scanner_name"] = name_map.get(sp["scanner_id"], "Unknown")
         if sp.get("inspector_id") and not sp.get("inspector_name"):
-            sp["inspector_name"] = get_name(sp.get("inspector_id"))
+            sp["inspector_name"] = name_map.get(sp["inspector_id"], "Unknown")
 
-    # ── FIFO: attach station_jobcard_id to each scan ─────────────────────────
-    # ── FIFO: batch-fetch all data needed, then resolve in-memory ────────────
-    # 1. Collect unique (station_id, process_name) pairs from scans
-    st_process_pairs: set = set()
-    for sp in scans:
-        sid = sp.get("station_id")
-        pname = sp.get("process_name")
-        if sid and pname:
-            st_process_pairs.add((sid, pname))
 
-    unique_station_ids = {sid for sid, _ in st_process_pairs}
+    # ── Station jobcard enrichment ─────────────────────────────────────────────
+    # station_jobcard_id is persisted on the scan record at scan time.
+    # Read it directly — no FIFO computation needed.
 
-    # 2. One query per unique station for all OKAY scan rankings (sorted by time)
-    #    Result: (sid, pname) -> [qr_id, ...] in chronological order (unique QRs)
-    okay_rankings: dict = {}
-    for (sid, pname) in st_process_pairs:
-        seen_qrs: set = set()
-        ranked: list = []
-        for doc in scanner_processes_collection.find(
-            {"station_id": sid, "process_name": pname, "inspection_status": "OKAY"},
-            {"qr_id": 1, "start_time": 1, "_id": 0}
-        ).sort("start_time", 1):
-            qid = doc.get("qr_id")
-            if qid and qid not in seen_qrs:
-                seen_qrs.add(qid)
-                ranked.append((doc["start_time"], qid))
-        okay_rankings[(sid, pname)] = ranked  # list of (start_time, qr_id)
-
-    # 3. One query per unique station for FIFO jobcard lists
-    station_jc_map: dict = {}  # sid -> [jc_doc, ...]
-    for sid in unique_station_ids:
-        jcs = list(
-            job_cards_collection.find(
-                {"station_ids": sid},
-                {"jobcard_id": 1, "quantity": 1, "created_at": 1}
-            ).sort("created_at", 1)
-        )
-        for jc in jcs:
-            jc.pop("_id", None)
-        station_jc_map[sid] = jcs
-
-    # 4. Resolve station_jobcard_id for each scan using in-memory FIFO walk
-    for sp in scans:
-        sid = sp.get("station_id")
-        pname = sp.get("process_name")
-        scan_time = sp.get("start_time")
-        if not sid or not pname or not scan_time:
-            continue
-        jcs = station_jc_map.get(sid, [])
-        if not jcs:
-            continue
-
-        # Count unique OKAY QRs at this station up to this scan's time (in-memory)
-        ranked = okay_rankings.get((sid, pname), [])
-        total_upto = sum(1 for t, _ in ranked if t <= scan_time)
-
-        # FIFO walk
-        cumulative = 0
-        matched_jc = None
-        for jc in jcs:
-            qty = jc.get("quantity") or 0
-            if qty <= 0:
-                continue
-            if total_upto > cumulative:
-                matched_jc = jc
-                if total_upto <= cumulative + qty:
-                    break
-            cumulative += qty
-        if matched_jc:
-            sp["station_jobcard_id"] = matched_jc.get("jobcard_id")
-
-    # ── Collect unique station jobcard full entries (bulk fetch) ──────────────
+    # Bulk fetch all unique matched jobcard docs
     matched_jc_ids = list({
         sp["station_jobcard_id"]
         for sp in scans
@@ -1275,16 +1233,11 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
 
     station_jc_entries = []
     if matched_jc_ids:
-        # Single bulk fetch for all matched jobcards
-        jc_docs = {
-            jc["jobcard_id"]: jc
-            for jc in job_cards_collection.find(
-                {"jobcard_id": {"$in": matched_jc_ids}}
-            )
-            if not jc.pop("_id", None) or True
-        }
+        jc_docs = {}
+        for jc in job_cards_collection.find({"jobcard_id": {"$in": matched_jc_ids}}):
+            jc.pop("_id", None)
+            jc_docs[jc["jobcard_id"]] = jc
 
-        # Single bulk fetch for all creators
         creator_ids = list({
             jc.get("created_by")
             for jc in jc_docs.values()
@@ -1298,7 +1251,6 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
             ):
                 creator_map[u["user_id"]] = u
 
-        # Preserve order: station jobcards appear in the order their scan appears
         seen_jc_ids: set = set()
         for sp in scans:
             jcid = sp.get("station_jobcard_id")

@@ -466,7 +466,6 @@ class JobCard(JobCardBase):
     carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
     currency: Optional[str] = "INR"
-    is_active: Optional[bool] = None  # True = currently filling station slot; None = QR-based jobcard
 
 class JobCardResponse(BaseModel):
     cards: list[JobCard]
@@ -590,7 +589,7 @@ class ScannerHistoryEntry(BaseModel):
     plant_name: Optional[str] = None
     plant_address: Optional[str] = None
     part_name: Optional[str] = None
-    station_jobcard_id: Optional[str] = None  # station-based (no-QR) jobcard for this process
+    station_jobcard_id: Optional[str] = None
 
 
 class AssemblyHistoryEntry(BaseModel):
