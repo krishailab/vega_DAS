@@ -209,6 +209,7 @@ class ScannerProcessDetail(ScannerProcessDetailCreate):
     plant_name: Optional[str] = None
     plant_address: Optional[str] = None
     part_name: Optional[str] = None
+    station_jobcard_id: Optional[str] = None  # ID of the station-based (no-QR) jobcard owning this scan
 
 class AssemblyLinkCreate(BaseModel):
     qr_ids: list[str]
@@ -465,6 +466,7 @@ class JobCard(JobCardBase):
     carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
     currency: Optional[str] = "INR"
+    is_active: Optional[bool] = None  # True = currently filling station slot; None = QR-based jobcard
 
 class JobCardResponse(BaseModel):
     cards: list[JobCard]
@@ -588,6 +590,8 @@ class ScannerHistoryEntry(BaseModel):
     plant_name: Optional[str] = None
     plant_address: Optional[str] = None
     part_name: Optional[str] = None
+    station_jobcard_id: Optional[str] = None  # station-based (no-QR) jobcard for this process
+
 
 class AssemblyHistoryEntry(BaseModel):
     type: str = "Assembly Process"

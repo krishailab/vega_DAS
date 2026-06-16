@@ -158,6 +158,17 @@ class ScanOperations:
 
         threading.Thread(target=_bg_bookkeeping, daemon=True).start()
 
+        # ── Resolve station-based jobcard for this scan (single indexed lookup) ─
+        # is_active=True is maintained by _update_station_jobcards_fifo (background).
+        # This replaces the expensive FIFO calculation with O(1) DB lookup.
+        if assigned_station_id:
+            active_st_jc = job_cards_collection.find_one(
+                {"station_ids": assigned_station_id, "is_active": True},
+                {"jobcard_id": 1}
+            )
+            if active_st_jc:
+                scan_dict["station_jobcard_id"] = active_st_jc["jobcard_id"]
+
         # ── Background: job card completion checks ────────────────────────────
         # Step-1 jobcard (owns the QR directly) — individual check
         if qr_master.get("jobcard_id"):
@@ -355,7 +366,71 @@ class ScanOperations:
                 d["linker_name"] = get_name(d.get("linker_id"))
             d["qr_ids"] = [{"qr_id": q, "part_name": get_part_name(q)} for q in d.get("qr_ids", [])]
             history.append(d)
-            
+        _station_jc_cache: dict = {}
+
+        def _get_station_jobcards(sid: str):
+            if sid in _station_jc_cache:
+                return _station_jc_cache[sid]
+            jcs = list(
+                job_cards_collection.find(
+                    {"station_ids": sid},
+                    {"jobcard_id": 1, "jobcard_no": 1, "quantity": 1,
+                     "status": 1, "completion_percentage": 1, "created_at": 1}
+                ).sort("created_at", 1)
+            )
+            for jc in jcs:
+                jc.pop("_id", None)
+            _station_jc_cache[sid] = jcs
+            return jcs
+
+        # Cache: station_id → count of OKAY unique QRs up to each scan's time
+        # We resolve per-scan using a position in the FIFO queue.
+        for entry in history:
+            if entry.get("activity_type") not in ("Scan", "Inspection (Part)"):
+                continue
+            sid = entry.get("station_id")
+            process_name_entry = entry.get("process_name")
+            scan_time = entry.get("start_time")
+            if not sid or not process_name_entry or not scan_time:
+                continue
+
+            jcs = _get_station_jobcards(sid)
+            if not jcs:
+                continue
+
+            # Count how many unique OKAY QRs at this station existed UP TO this scan time
+            okay_qr_ids_upto: set = set()
+            for doc in scanner_processes_collection.find(
+                {
+                    "station_id": sid,
+                    "process_name": process_name_entry,
+                    "inspection_status": "OKAY",
+                    "start_time": {"$lte": scan_time}
+                },
+                {"qr_id": 1, "_id": 0}
+            ):
+                if doc.get("qr_id"):
+                    okay_qr_ids_upto.add(doc["qr_id"])
+
+            total_upto = len(okay_qr_ids_upto)
+
+            # Walk FIFO queue to find which jobcard slot this scan's position falls into
+            cumulative = 0
+            matched_jc = None
+            for jc in jcs:
+                qty = jc.get("quantity") or 0
+                if qty <= 0:
+                    continue
+                if total_upto > cumulative:
+                    matched_jc = jc
+                    if total_upto <= cumulative + qty:
+                        break
+                cumulative += qty
+
+            if matched_jc:
+                entry["station_jobcard_id"] = matched_jc.get("jobcard_id")
+
+
         history.sort(key=lambda x: x["start_time"] if x.get("start_time") else datetime.min, reverse=True)
         total_count = len(history)
         import math
@@ -1120,8 +1195,130 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
         if sp.get("inspector_id") and not sp.get("inspector_name"):
             sp["inspector_name"] = get_name(sp.get("inspector_id"))
 
+    # ── FIFO: attach station_jobcard_id to each scan ─────────────────────────
+    # ── FIFO: batch-fetch all data needed, then resolve in-memory ────────────
+    # 1. Collect unique (station_id, process_name) pairs from scans
+    st_process_pairs: set = set()
+    for sp in scans:
+        sid = sp.get("station_id")
+        pname = sp.get("process_name")
+        if sid and pname:
+            st_process_pairs.add((sid, pname))
+
+    unique_station_ids = {sid for sid, _ in st_process_pairs}
+
+    # 2. One query per unique station for all OKAY scan rankings (sorted by time)
+    #    Result: (sid, pname) -> [qr_id, ...] in chronological order (unique QRs)
+    okay_rankings: dict = {}
+    for (sid, pname) in st_process_pairs:
+        seen_qrs: set = set()
+        ranked: list = []
+        for doc in scanner_processes_collection.find(
+            {"station_id": sid, "process_name": pname, "inspection_status": "OKAY"},
+            {"qr_id": 1, "start_time": 1, "_id": 0}
+        ).sort("start_time", 1):
+            qid = doc.get("qr_id")
+            if qid and qid not in seen_qrs:
+                seen_qrs.add(qid)
+                ranked.append((doc["start_time"], qid))
+        okay_rankings[(sid, pname)] = ranked  # list of (start_time, qr_id)
+
+    # 3. One query per unique station for FIFO jobcard lists
+    station_jc_map: dict = {}  # sid -> [jc_doc, ...]
+    for sid in unique_station_ids:
+        jcs = list(
+            job_cards_collection.find(
+                {"station_ids": sid},
+                {"jobcard_id": 1, "quantity": 1, "created_at": 1}
+            ).sort("created_at", 1)
+        )
+        for jc in jcs:
+            jc.pop("_id", None)
+        station_jc_map[sid] = jcs
+
+    # 4. Resolve station_jobcard_id for each scan using in-memory FIFO walk
+    for sp in scans:
+        sid = sp.get("station_id")
+        pname = sp.get("process_name")
+        scan_time = sp.get("start_time")
+        if not sid or not pname or not scan_time:
+            continue
+        jcs = station_jc_map.get(sid, [])
+        if not jcs:
+            continue
+
+        # Count unique OKAY QRs at this station up to this scan's time (in-memory)
+        ranked = okay_rankings.get((sid, pname), [])
+        total_upto = sum(1 for t, _ in ranked if t <= scan_time)
+
+        # FIFO walk
+        cumulative = 0
+        matched_jc = None
+        for jc in jcs:
+            qty = jc.get("quantity") or 0
+            if qty <= 0:
+                continue
+            if total_upto > cumulative:
+                matched_jc = jc
+                if total_upto <= cumulative + qty:
+                    break
+            cumulative += qty
+        if matched_jc:
+            sp["station_jobcard_id"] = matched_jc.get("jobcard_id")
+
+    # ── Collect unique station jobcard full entries (bulk fetch) ──────────────
+    matched_jc_ids = list({
+        sp["station_jobcard_id"]
+        for sp in scans
+        if sp.get("station_jobcard_id")
+    })
+
+    station_jc_entries = []
+    if matched_jc_ids:
+        # Single bulk fetch for all matched jobcards
+        jc_docs = {
+            jc["jobcard_id"]: jc
+            for jc in job_cards_collection.find(
+                {"jobcard_id": {"$in": matched_jc_ids}}
+            )
+            if not jc.pop("_id", None) or True
+        }
+
+        # Single bulk fetch for all creators
+        creator_ids = list({
+            jc.get("created_by")
+            for jc in jc_docs.values()
+            if jc.get("created_by") and not jc.get("created_by_name")
+        })
+        creator_map: dict = {}
+        if creator_ids:
+            for u in users_collection.find(
+                {"user_id": {"$in": creator_ids}},
+                {"user_id": 1, "first_name": 1, "last_name": 1, "role": 1, "department": 1}
+            ):
+                creator_map[u["user_id"]] = u
+
+        # Preserve order: station jobcards appear in the order their scan appears
+        seen_jc_ids: set = set()
+        for sp in scans:
+            jcid = sp.get("station_jobcard_id")
+            if not jcid or jcid in seen_jc_ids:
+                continue
+            seen_jc_ids.add(jcid)
+            jc_doc = jc_docs.get(jcid)
+            if not jc_doc:
+                continue
+            jc_doc["type"] = "Job Card"
+            if not jc_doc.get("created_by_name"):
+                u = creator_map.get(jc_doc.get("created_by", ""))
+                if u:
+                    jc_doc["created_by_name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+                    jc_doc.setdefault("created_by_role", u.get("role"))
+                    jc_doc.setdefault("created_by_department", u.get("department"))
+            station_jc_entries.append(jc_doc)
+
     scans.sort(key=lambda x: x["start_time"] if x.get("start_time") else datetime.min)
-    
+
     if include_dispatch and product_info.get("part_name") and product_info["part_name"].upper() == "BOX":
         dispatch_data = _get_dispatch_tracking_logic(qr_id, recursive=False)
         if dispatch_data:
@@ -1129,8 +1326,11 @@ def _get_qr_component_data(qr_id: str, include_dispatch: bool = True):
                 "type": "Dispatch Detail",
                 "data": dispatch_data
             })
-    
-    return product_info, job_card_entry, scans
+
+    return product_info, job_card_entry, scans, station_jc_entries
+
+
+
 
 def _get_dispatch_tracking_logic(qr_id: str, recursive: bool = True):
     # 1. Find the dispatch record. 
@@ -1152,13 +1352,20 @@ def _get_dispatch_tracking_logic(qr_id: str, recursive: bool = True):
         seen_qrs.add(qid)
         
         # Get individual data, but DO NOT recurse back into dispatch if we are already in one
-        prod_info, job_card, scans = _get_qr_component_data(qid, include_dispatch=recursive)
-        
+        prod_info, job_card, scans, station_jc_entries = _get_qr_component_data(qid, include_dispatch=recursive)
+
+        # Interleave station jobcards right before their first associated scan
         comp_history = []
         if job_card:
             comp_history.append(job_card)
-        if scans:
-            comp_history.extend(scans)
+        station_jc_map = {jc["jobcard_id"]: jc for jc in station_jc_entries if jc.get("jobcard_id")}
+        inserted_station_jcs: set = set()
+        for scan in scans:
+            jcid = scan.get("station_jobcard_id")
+            if jcid and jcid not in inserted_station_jcs and jcid in station_jc_map:
+                comp_history.append(station_jc_map[jcid])
+                inserted_station_jcs.add(jcid)
+            comp_history.append(scan)
             
         components.append({
             "product": prod_info if prod_info else {"qr_id": qid, "part_name": get_part_name(qid)},
@@ -1189,7 +1396,7 @@ def _build_qr_history_tree(qr_id: str):
             return
         visited_qrs.add(qid)
         
-        prod_info, job_card, scans = _get_qr_component_data(qid, include_dispatch=True)
+        prod_info, job_card, scans, station_jc_entries = _get_qr_component_data(qid, include_dispatch=True)
         if not prod_info:
             discovered_components.append({
                 "product": {"qr_id": qid, "part_name": f"ERROR: QR {qid} not found in master records"},
@@ -1197,10 +1404,22 @@ def _build_qr_history_tree(qr_id: str):
             })
             return
 
+        # Build history: step-1 jobcard first, then scans in time order.
+        # Station jobcards (step-2+) are inserted right before the first scan
+        # that references them — so the order is:
+        #   Job Card (step 1) → Reader Process → Job Card (step 2) → Reader Process → ...
         comp_history = []
         if job_card:
             comp_history.append(job_card)
-        comp_history.extend(scans)
+
+        station_jc_map = {jc["jobcard_id"]: jc for jc in station_jc_entries if jc.get("jobcard_id")}
+        inserted_station_jcs: set = set()
+        for scan in scans:
+            jcid = scan.get("station_jobcard_id")
+            if jcid and jcid not in inserted_station_jcs and jcid in station_jc_map:
+                comp_history.append(station_jc_map[jcid])
+                inserted_station_jcs.add(jcid)
+            comp_history.append(scan)
 
         discovered_components.append({
             "product": prod_info,
@@ -1673,7 +1892,9 @@ def _update_station_jobcards_fifo(station_id: str):
     total_okay = len(okay_qr_ids)
 
     # 4. FIFO assignment — fill oldest jobcard first
+    # Also maintain is_active flag: only the current filling jobcard is active.
     cumulative = 0
+    active_set = False  # Track whether we've assigned is_active=True yet
     for jc in all_jcs:
         qty = jc.get("quantity") or 0
         if qty <= 0:
@@ -1686,17 +1907,23 @@ def _update_station_jobcards_fifo(station_id: str):
         update_fields = {"completion_percentage": pct}
         current_status = jc.get("status", "CREATED")
 
-        if finished >= qty:
+        if finished >= qty or current_status == "COMPLETED":
+            # This slot is full — mark completed, deactivate
             if current_status != "COMPLETED":
                 update_fields["status"] = "COMPLETED"
                 update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "COMPLETED"})
-        elif finished > 0:
-            if current_status == "CREATED":
+            update_fields["is_active"] = False
+
+        elif not active_set:
+            # This is the current filling slot — activate it
+            if finished > 0 and current_status == "CREATED":
                 update_fields["status"] = "IN PROGRESS"
                 update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "IN PROGRESS"})
+            update_fields["is_active"] = True
+            active_set = True
         else:
-            # No scans yet for this slot — keep status unchanged
-            pass
+            # Future slots — not yet active
+            update_fields["is_active"] = False
 
         job_cards_collection.update_one(
             {"jobcard_id": jc["jobcard_id"]},
@@ -1704,4 +1931,3 @@ def _update_station_jobcards_fifo(station_id: str):
         )
 
         cumulative += qty
-

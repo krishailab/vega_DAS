@@ -1184,7 +1184,15 @@ class JobCardOperations:
             "product_model_name": data.product_model_name,
             "auto_scan": getattr(data, "auto_scan", False)
         }
-        
+        _station_ids = getattr(data, "station_ids", []) or []
+        if _station_ids:
+            _already_active = job_cards_collection.find_one(
+                {"station_ids": {"$in": _station_ids}, "is_active": True},
+                {"jobcard_id": 1}
+            )
+            jobcard_dict["is_active"] = not bool(_already_active)
+        else:
+            jobcard_dict["is_active"] = False
         if variant:
             jobcard_dict["variant_id"] = variant.get("variant_id")
             jobcard_dict["variant_sku"] = variant.get("sku_no")
@@ -1275,6 +1283,15 @@ class JobCardOperations:
             "currency": getattr(job_card, "currency", "INR"),
             "auto_scan": getattr(job_card, "auto_scan", False)
         }
+        _station_ids = getattr(job_card, "station_ids", []) or []
+        if _station_ids:
+            _already_active = job_cards_collection.find_one(
+                {"station_ids": {"$in": _station_ids}, "is_active": True},
+                {"jobcard_id": 1}
+            )
+            jobcard_dict["is_active"] = not bool(_already_active)
+        else:
+            jobcard_dict["is_active"] = False
 
         inserted = False
         attempts = 0
