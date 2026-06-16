@@ -438,7 +438,18 @@ class JobCardOperations:
         now = utils.get_current_time()
         jobcard_dict["created_at"] = now
         jobcard_dict["status"] = "CREATED"
-        
+
+        # ── Set is_active for station-based jobcards ──────────────────────────
+        _station_ids = jobcard_dict.get("station_ids") or []
+        if _station_ids:
+            _already_active = job_cards_collection.find_one(
+                {"station_ids": {"$in": _station_ids}, "is_active": True},
+                {"jobcard_id": 1}
+            )
+            jobcard_dict["is_active"] = not bool(_already_active)
+        else:
+            jobcard_dict["is_active"] = False
+
         inserted = False
         attempts = 0
         while not inserted and attempts < 5:

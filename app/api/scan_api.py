@@ -1397,7 +1397,6 @@ def _build_qr_history_tree(qr_id: str):
         for ap in assemblies:
             asm_id = ap["assembly_id"]
             if asm_id not in discovered_assemblies:
-                # Format assembly event for response
                 ap.pop("_id", None)
                 ap["type"] = "Assembly Process"
                 if not ap.get("linker_name"):
