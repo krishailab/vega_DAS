@@ -1807,17 +1807,14 @@ def _check_and_update_job_card_completion_sync(jobcard_id: str):
 
 def _update_station_jobcards_fifo(station_id: str):
     """
-    FIFO queue model for station-based (step-2+) jobcards.
+    Time-windowed FIFO for station-based jobcards.
 
-    All jobcards sharing the same station_id are sorted by created_at ascending.
-    The oldest open jobcard fills first. The next jobcard only gets credit for
-    scans BEYOND the cumulative quantity of all preceding jobcards.
+    Each jobcard owns scans in its own time window:
+      [jobcard.created_at,  next_jobcard.created_at)
+    The last jobcard's window is open-ended (up to now).
 
-    Example: 4 jobcards at STA001 with qty [4, 2, 2, 2], 2 total OKAY scans:
-      JBC-A (oldest, qty 4): gets min(2, 4) = 2  → 50%  IN PROGRESS
-      JBC-B (qty 2):         gets min(2-4, 2) = 0 → 0%   CREATED
-      JBC-C (qty 2):         gets 0              → 0%   CREATED
-      JBC-D (qty 2):         gets 0              → 0%   CREATED
+    This prevents old historical scans from instantly completing
+    newly-created jobcards.
     """
     # 1. Station → process name
     station_doc = stations_collection.find_one(
@@ -1834,66 +1831,85 @@ def _update_station_jobcards_fifo(station_id: str):
     all_jcs = list(
         job_cards_collection.find(
             {"station_ids": station_id},
-            {"jobcard_id": 1, "quantity": 1, "created_at": 1, "status": 1, "part_id": 1}
+            {"jobcard_id": 1, "quantity": 1, "created_at": 1, "status": 1}
         ).sort("created_at", 1)
     )
     if not all_jcs:
         return
+    all_okay_scans = list(
+        scanner_processes_collection.find(
+            {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
+            {"qr_id": 1, "start_time": 1, "_id": 0}
+        ).sort("start_time", 1)
+    )
+    all_okay_asm = list(
+        assembly_processes_collection.find(
+            {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
+            {"component_ids": 1, "start_time": 1, "_id": 0}
+        ).sort("start_time", 1)
+    )
 
-    # 3. Count total unique OKAY QRs at this station (all time)
-    okay_qr_ids: set = set()
-    for doc in scanner_processes_collection.find(
-        {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
-        {"qr_id": 1, "_id": 0}
-    ):
-        if doc.get("qr_id"):
-            okay_qr_ids.add(doc["qr_id"])
-    for doc in assembly_processes_collection.find(
-        {"station_id": station_id, "process_name": process_name, "inspection_status": "OKAY"},
-        {"component_ids": 1, "_id": 0}
-    ):
-        for qid in doc.get("component_ids", []):
-            okay_qr_ids.add(qid)
-
-    total_okay = len(okay_qr_ids)
-
-    # 4. FIFO assignment — fill oldest jobcard first
-    # Also maintain is_active flag: only the current filling jobcard is active.
-    cumulative = 0
-    active_set = False  # Track whether we've assigned is_active=True yet
-    for jc in all_jcs:
+    # 4. For each jobcard count unique OKAY QRs within its time window
+    active_set = False
+    for idx, jc in enumerate(all_jcs):
         qty = jc.get("quantity") or 0
         if qty <= 0:
             continue
 
-        # How many of the total scans belong to this jobcard's slot?
-        finished = max(0, min(total_okay - cumulative, qty))
+        window_start = jc.get("created_at")
+        window_end = all_jcs[idx + 1].get("created_at") if idx + 1 < len(all_jcs) else None
+
+        seen_qrs: set = set()
+        for doc in all_okay_scans:
+            t = doc.get("start_time")
+            if t is None:
+                continue
+            if window_start and t < window_start:
+                continue
+            if window_end and t >= window_end:
+                continue
+            if doc.get("qr_id"):
+                seen_qrs.add(doc["qr_id"])
+        for doc in all_okay_asm:
+            t = doc.get("start_time")
+            if t is None:
+                continue
+            if window_start and t < window_start:
+                continue
+            if window_end and t >= window_end:
+                continue
+            for qid in doc.get("component_ids", []):
+                seen_qrs.add(qid)
+
+        finished = len(seen_qrs)
         pct = round((finished / qty) * 100, 2)
 
         update_fields = {"completion_percentage": pct}
         current_status = jc.get("status", "CREATED")
 
-        if finished >= qty or current_status == "COMPLETED":
-            # This slot is full — mark completed, deactivate
+        if finished >= qty:
+            # Slot fully filled → COMPLETED, deactivate
             if current_status != "COMPLETED":
                 update_fields["status"] = "COMPLETED"
                 update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "COMPLETED"})
             update_fields["is_active"] = False
 
         elif not active_set:
-            # This is the current filling slot — activate it
-            if finished > 0 and current_status == "CREATED":
+            # Currently filling slot — activate it; self-heal if wrongly completed
+            if current_status == "COMPLETED":
+                update_fields["status"] = "IN PROGRESS"
+                update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "IN PROGRESS"})
+            elif finished > 0 and current_status == "CREATED":
                 update_fields["status"] = "IN PROGRESS"
                 update_rtdb(f"/job_cards/{jc['jobcard_id']}", {"status": "IN PROGRESS"})
             update_fields["is_active"] = True
             active_set = True
+
         else:
-            # Future slots — not yet active
+            # Future slot — not yet active
             update_fields["is_active"] = False
 
         job_cards_collection.update_one(
             {"jobcard_id": jc["jobcard_id"]},
             {"$set": update_fields}
         )
-
-        cumulative += qty

@@ -466,6 +466,7 @@ class JobCard(JobCardBase):
     carton_box_size: Optional[int] = None
     carton_barcode: Optional[str] = None
     currency: Optional[str] = "INR"
+    is_active: Optional[bool] = False
 
 class JobCardResponse(BaseModel):
     cards: list[JobCard]

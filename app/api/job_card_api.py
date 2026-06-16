@@ -952,6 +952,8 @@ class JobCardOperations:
             # Map completion details directly from DB fields
             c["completion_percentage"] = c.get("completion_percentage", 0.0)
             c["process_wise_completion"] = c.get("process_wise_completion", [])
+            c["is_active"] = c.get("is_active", False)
+
 
         return {
             "cards": cards,
@@ -1078,7 +1080,9 @@ class JobCardOperations:
             details = JobCardOperations.get_jobcard_completion_details(card["jobcard_id"], card["quantity"], card.get("part_id"))
             card["completion_percentage"] = details["completion_percentage"]
             card["process_wise_completion"] = details["process_wise_completion"]
+        card["is_active"] = card.get("is_active", False)
         return card
+
 
     @staticmethod
     def update_job_card_status(jobcard_id: str, status_update: schemas.JobCardStatusUpdate, current_user: dict):
