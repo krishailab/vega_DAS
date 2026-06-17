@@ -641,6 +641,7 @@ class JobCardOperations:
                         "plant_id": station.get("plant_id") or current_user.get("plant_id"),
                         "plant_name": station.get("plant_name") or current_user.get("plant_name"),
                         "plant_address": station.get("plant_address") or current_user.get("plant_address"),
+                        "station_jobcard_id": jobcard_dict["jobcard_id"] if jobcard_dict.get("station_ids") else None,
                     }
                     
                     scanner_processes_collection.insert_one(scan_dict)
@@ -1890,22 +1891,19 @@ class JobCardOperations:
 
         # ── STATION-BASED (no-QR) jobcard ──────────────────────────────────────
         if is_station_based:
-            # Fetch all scans attributed to this jobcard via station_jobcard_id
-            scan_filter: dict = {"station_jobcard_id": jobcard_id}
+            # Retrieve all QR codes registered under this jobcard
+            qr_records = list(qr_master_collection.find({"jobcard_id": jobcard_id}, {"qr_id": 1}))
+            jc_qr_ids = {q["qr_id"] for q in qr_records if q.get("qr_id")}
+
+            # Retrieve distinct QR IDs from scans explicitly mapped to this jobcard
+            scanned_qr_ids = set(scanner_processes_collection.distinct("qr_id", {"station_jobcard_id": jobcard_id}))
+
+            unique_qrs = sorted(list(jc_qr_ids | scanned_qr_ids))
+
             if search and search.strip():
-                scan_filter["qr_id"] = {"$regex": search.strip(), "$options": "i"}
+                search_lower = search.strip().lower()
+                unique_qrs = [q for q in unique_qrs if search_lower in q.lower()]
 
-            all_scans = list(scanner_processes_collection.find(scan_filter).sort("start_time", 1))
-
-            # Group scans by qr_id first
-            scans_by_qr = {}
-            for s in all_scans:
-                s.pop("_id", None)
-                s["type"] = "Reader Process"
-                qid = s.get("qr_id") or "UNKNOWN"
-                scans_by_qr.setdefault(qid, []).append(s)
-
-            unique_qrs = sorted(list(scans_by_qr.keys()))
             total_qrs = len(unique_qrs)
 
             if page < 1:
@@ -1914,6 +1912,32 @@ class JobCardOperations:
                 limit = 50
             skip = (page - 1) * limit
             paginated_qrs = unique_qrs[skip : skip + limit]
+
+            # Fetch scans only for the paginated QRs
+            if paginated_qrs:
+                paginated_jc_qrs = [q for q in paginated_qrs if q in jc_qr_ids]
+                scan_filter = {
+                    "qr_id": {"$in": paginated_qrs},
+                    "$or": [
+                        {"station_jobcard_id": jobcard_id}
+                    ]
+                }
+                if paginated_jc_qrs:
+                    scan_filter["$or"].append({"qr_id": {"$in": paginated_jc_qrs}})
+                    
+                all_scans = list(scanner_processes_collection.find(scan_filter).sort("start_time", 1))
+            else:
+                all_scans = []
+
+            # Group scans by qr_id
+            scans_by_qr = {qid: [] for qid in paginated_qrs}
+
+            for s in all_scans:
+                s.pop("_id", None)
+                s["type"] = "Reader Process"
+                qid = s.get("qr_id") or "UNKNOWN"
+                if qid in scans_by_qr:
+                    scans_by_qr[qid].append(s)
 
             qrs_detailed = []
             for qid in paginated_qrs:
