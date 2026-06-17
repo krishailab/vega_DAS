@@ -1897,37 +1897,67 @@ class JobCardOperations:
 
             all_scans = list(scanner_processes_collection.find(scan_filter).sort("start_time", 1))
 
-            # Group by process_name
-            processes: dict = {}
+            # Group scans by qr_id first
+            scans_by_qr = {}
             for s in all_scans:
                 s.pop("_id", None)
-                pname = s.get("process_name") or "Unknown"
-                if pname not in processes:
-                    processes[pname] = {
-                        "process_name": pname,
-                        "station_name": s.get("station_name"),
-                        "station_id": s.get("station_id"),
-                        "total_scans": 0,
-                        "okay_count": 0,
-                        "reject_count": 0,
-                        "unique_qr_ids": set(),
-                        "scans": []
-                    }
-                grp = processes[pname]
-                grp["total_scans"] += 1
-                if s.get("inspection_status") == "OKAY":
-                    grp["okay_count"] += 1
-                elif s.get("inspection_status") == "REJECTED":
-                    grp["reject_count"] += 1
-                if s.get("qr_id"):
-                    grp["unique_qr_ids"].add(s["qr_id"])
-                grp["scans"].append(s)
+                s["type"] = "Reader Process"
+                qid = s.get("qr_id") or "UNKNOWN"
+                scans_by_qr.setdefault(qid, []).append(s)
 
-            # Finalise
-            process_list = []
-            for grp in processes.values():
-                grp["unique_qr_count"] = len(grp.pop("unique_qr_ids"))
-                process_list.append(grp)
+            unique_qrs = sorted(list(scans_by_qr.keys()))
+            total_qrs = len(unique_qrs)
+
+            if page < 1:
+                page = 1
+            if limit < 1:
+                limit = 50
+            skip = (page - 1) * limit
+            paginated_qrs = unique_qrs[skip : skip + limit]
+
+            qrs_detailed = []
+            for qid in paginated_qrs:
+                qr_scans = scans_by_qr[qid]
+                
+                # Group scans for this QR by process_name
+                processes = {}
+                for s in qr_scans:
+                    pname = s.get("process_name") or "Unknown"
+                    if pname not in processes:
+                        processes[pname] = {
+                            "process_name": pname,
+                            "station_name": s.get("station_name"),
+                            "station_id": s.get("station_id"),
+                            "latest_status": None,
+                            "scan_count": 0,
+                            "okay_count": 0,
+                            "reject_count": 0,
+                            "scans": []
+                        }
+                    grp = processes[pname]
+                    grp["scan_count"] += 1
+                    status_val = s.get("inspection_status")
+                    if status_val == "OKAY":
+                        grp["okay_count"] += 1
+                    elif status_val == "REJECTED":
+                        grp["reject_count"] += 1
+                    grp["latest_status"] = status_val
+                    grp["scans"].append(s)
+
+                # Find the latest status from sorted scans
+                latest_scan = qr_scans[-1] if qr_scans else {}
+                quality_status = latest_scan.get("inspection_status", "NOT SCANNED")
+
+                qrs_detailed.append({
+                    "qr_id": qid,
+                    "status": "IN USE" if qr_scans else "UNUSED",
+                    "quality_status": quality_status,
+                    "created_at": qr_scans[0].get("start_time") if qr_scans else None,
+                    "process_count": len(processes),
+                    "processes": list(processes.values()),
+                    "assembly_events": [],
+                    "dispatch_events": []
+                })
 
             return {
                 "jobcard_id": jobcard_id,
@@ -1938,8 +1968,11 @@ class JobCardOperations:
                 "status": jobcard.get("status"),
                 "is_station_based": True,
                 "station_ids": station_ids,
-                "total_scans": len(all_scans),
-                "processes": process_list
+                "total_qrs": total_qrs,
+                "page": page,
+                "limit": limit,
+                "total_pages": (total_qrs + limit - 1) // limit if limit > 0 else 1,
+                "qrs": qrs_detailed
             }
 
         # ── QR-BASED jobcard ────────────────────────────────────────────────────
