@@ -974,6 +974,8 @@ class B2BSubmodelCardVariant(BaseModel):
     quantity: Optional[int] = None
     inward_id: str
     is_active: bool
+    model_images: list[str] = []
+    product_images: list[str] = []
 
 class B2BSubmodelCardResponse(BaseModel):
     submodel_id: str

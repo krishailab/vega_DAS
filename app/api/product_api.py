@@ -937,10 +937,10 @@ class ProductVariantOperations:
             v["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
 
             # Separate submodel images from variant images
-            model_images = submodel.get("product_images", []) if submodel else []
+            model_images = submodel.get("product_images") or []
             v["model_images"] = model_images
             
-            variant_images = v.get("product_images", [])
+            variant_images = v.get("product_images") or []
             v["product_images"] = [img for img in variant_images if img not in model_images]
 
             # Dynamic submodel/model resolutions
@@ -1239,10 +1239,10 @@ class ProductVariantOperations:
         variant["model_chinstrap_lock"] = model.get("chinstrap_lock") if model else None
         
         # Separate submodel images from variant images
-        model_images = submodel.get("product_images", []) if submodel else []
+        model_images = submodel.get("product_images") or [] if submodel else []
         variant["model_images"] = model_images
         
-        variant_images = variant.get("product_images", [])
+        variant_images = variant.get("product_images") or []
         variant["product_images"] = [img for img in variant_images if img not in model_images]
 
         # Dynamic submodel/model resolutions

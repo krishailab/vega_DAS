@@ -170,6 +170,7 @@ class B2BInwardOperations:
         size: Optional[int] = None,
         size_name: Optional[str] = None,
         chinstrap_lock: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> List[dict]:
         query = {}
         if is_featured is not None:
@@ -255,10 +256,23 @@ class B2BInwardOperations:
             name_parts = [part for part in [brand_name, model_name, submodel_name] if part]
             resolved_name = " ".join(name_parts) if name_parts else (submodel_name or "Unknown")
 
+            if search:
+                search_lower = search.lower()
+                sku_no = variant.get("sku_no", "").lower()
+                v_color = (variant.get("color") or submodel.get("color") or "").lower()
+                if search_lower not in resolved_name.lower() and search_lower not in sku_no and search_lower not in v_color:
+                    continue
+
             image_url = submodel.get("image")
+            submodel_images = submodel.get("product_images") or []
+            if not image_url and submodel_images:
+                image_url = submodel_images[0]
 
             inw_currency = inw.get("currency", "INR")
             dealer_price = float(inw.get("dealer_price", 0))
+
+            model_images = submodel_images
+            variant_images = variant.get("product_images") or []
 
             card_variant = {
                 "variant_id": variant_id,
@@ -270,7 +284,9 @@ class B2BInwardOperations:
                 "currency": inw_currency,
                 "quantity": inw.get("quantity"),
                 "inward_id": inw["inward_id"],
-                "is_active": inw.get("is_active", False)
+                "is_active": inw.get("is_active", False),
+                "model_images": model_images,
+                "product_images": [img for img in variant_images if img not in model_images]
             }
 
             if submodel_id_val not in submodels_map:
@@ -280,7 +296,6 @@ class B2BInwardOperations:
                     "image": image_url,
                     "color": submodel.get("color"),
                     "finish": submodel.get("finish"),
-                    "product_images": submodel.get("product_images", []),
                     "starting_price": dealer_price,
                     "currency": inw_currency,
                     "total_variants": 1,
@@ -370,6 +385,9 @@ class B2BInwardOperations:
                 
             b2b_inw.pop("_id", None)
             
+            model_images = submodel.get("product_images") or []
+            variant_images = v.get("product_images") or []
+
             variants.append({
                 "variant_id": v_id,
                 "sku_no": v.get("sku_no"),
@@ -379,7 +397,8 @@ class B2BInwardOperations:
                 "finish": v.get("finish") or submodel.get("finish"),
                 "is_active": v.get("is_active"),
                 "mrp": v.get("mrp") or submodel.get("mrp"),
-                "product_images": v.get("product_images") or submodel.get("product_images", []),
+                "model_images": model_images,
+                "product_images": [img for img in variant_images if img not in model_images],
                 "b2b_inward": b2b_inw
             })
             
@@ -752,6 +771,7 @@ def get_inward_product_cards(
     size: Optional[int] = None,
     size_name: Optional[str] = None,
     chinstrap_lock: Optional[str] = None,
+    search: Optional[str] = None,
 ):
     return B2BInwardOperations.get_inward_cards(
         is_featured=is_featured,
@@ -769,6 +789,7 @@ def get_inward_product_cards(
         size=size,
         size_name=size_name,
         chinstrap_lock=chinstrap_lock,
+        search=search,
     )
 
 @router.get("/inwards/filters", response_model=dict)
