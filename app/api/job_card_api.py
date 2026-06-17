@@ -1943,8 +1943,6 @@ class JobCardOperations:
                         grp["reject_count"] += 1
                     grp["latest_status"] = status_val
                     grp["scans"].append(s)
-
-                # Find the latest status from sorted scans
                 latest_scan = qr_scans[-1] if qr_scans else {}
                 quality_status = latest_scan.get("inspection_status", "NOT SCANNED")
 
