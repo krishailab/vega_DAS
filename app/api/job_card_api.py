@@ -1399,12 +1399,44 @@ class JobCardOperations:
             start_num = 1
             padding = 1
             
+        alpha_match = re.search(r'([A-Za-z]+)$', prefix)
+        if alpha_match:
+            alpha_suffix = alpha_match.group(1)
+            base_prefix = prefix[:alpha_match.start()]
+        else:
+            alpha_suffix = ""
+            base_prefix = prefix
+            
+        def increment_prefix(prefix_str, amount):
+            if amount == 0:
+                return prefix_str
+            val = 0
+            for c in prefix_str:
+                val = val * 26 + (ord(c.upper()) - ord('A'))
+            val += amount
+            res = []
+            for _ in range(len(prefix_str)):
+                res.append(chr((val % 26) + ord('A')))
+                val //= 26
+            while val > 0:
+                res.append(chr((val % 26) + ord('A')))
+                val //= 26
+            return "".join(reversed(res))
+
+        max_num = (10 ** padding) - 1
+            
         wb = openpyxl.Workbook(write_only=True)
         ws = wb.create_sheet(title="Generated IDs")
         ws.append(["Product ID"])
         
         for i in range(quantity):
-            new_id = f"{prefix}{start_num + i:0{padding}d}"
+            total_index = (start_num - 1) + i
+            prefix_increment = total_index // max_num
+            new_num = (total_index % max_num) + 1
+            
+            new_alpha = increment_prefix(alpha_suffix, prefix_increment) if alpha_suffix else alpha_suffix
+            new_prefix = f"{base_prefix}{new_alpha}"
+            new_id = f"{new_prefix}{new_num:0{padding}d}"
             ws.append([new_id])
             
         buffer = io.BytesIO()
