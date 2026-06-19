@@ -984,7 +984,7 @@ class ProductVariantOperations:
         update_data = variant.model_dump(exclude_unset=True)
         
         # Robustly handle images which might be empty strings, string urls, or UploadFiles
-        image_urls = existing.get("product_images", [])
+        image_urls = existing.get("product_images") or []
         base_dir = os.path.join("qrcodes", "Variants", variant_id)
         has_new_uploads = False
 
