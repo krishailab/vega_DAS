@@ -277,7 +277,7 @@ class ProductModelOperations:
         return model_dict
 
     @staticmethod
-    def get_models(page: int = 1, limit: int = 50, search: str = ""):
+    def get_models(page: int = 1, limit: int = 50, search: str = "", brand_id: Optional[str] = None, is_active: Optional[bool] = None):
         query = {}
         if search:
             query["$or"] = [
@@ -287,6 +287,10 @@ class ProductModelOperations:
                 {"category_name": {"$regex": search, "$options": "i"}},
                 {"subcategory_name": {"$regex": search, "$options": "i"}}
             ]
+        if brand_id is not None:
+            query["brand_id"] = brand_id
+        if is_active is not None:
+            query["is_active"] = is_active
         total_count = product_models_collection.count_documents(query)
         import math
         total_pages = math.ceil(total_count / limit) if limit > 0 else 0
@@ -421,7 +425,7 @@ class ProductSubModelOperations:
         return submodel_dict
 
     @staticmethod
-    def get_submodels(page: int = 1, limit: int = 50, search: str = ""):
+    def get_submodels(page: int = 1, limit: int = 50, search: str = "", model_id: Optional[str] = None, brand_id: Optional[str] = None, is_active: Optional[bool] = None):
         query = {}
         if search:
             query["$or"] = [
@@ -430,6 +434,12 @@ class ProductSubModelOperations:
                 {"model_name": {"$regex": search, "$options": "i"}},
                 {"brand_name": {"$regex": search, "$options": "i"}}
             ]
+        if model_id is not None:
+            query["model_id"] = model_id
+        if brand_id is not None:
+            query["brand_id"] = brand_id
+        if is_active is not None:
+            query["is_active"] = is_active
         total_count = product_submodels_collection.count_documents(query)
         import math
         total_pages = math.ceil(total_count / limit) if limit > 0 else 0
@@ -851,10 +861,32 @@ class ProductVariantOperations:
         return variant_dict
 
     @staticmethod
-    def get_variants(submodel_id: Optional[str] = None, page: int = 1, limit: int = 50, search: str = ""):
+    def get_variants(submodel_id: Optional[str] = None, page: int = 1, limit: int = 50, search: str = "", model_id: Optional[str] = None, brand_id: Optional[str] = None, is_active: Optional[bool] = None):
         query = {}
-        if submodel_id:
-            query["submodel_id"] = submodel_id
+        model_query = {}
+        if brand_id:
+            model_query["brand_id"] = brand_id
+        if model_id:
+            model_query["model_id"] = model_id
+            
+        if model_query:
+            allowed_models = [m["model_id"] for m in product_models_collection.find(model_query)]
+            allowed_submodels = [sm["submodel_id"] for sm in product_submodels_collection.find({"model_id": {"$in": allowed_models}})]
+            
+            if submodel_id:
+                if submodel_id in allowed_submodels:
+                    query["submodel_id"] = submodel_id
+                else:
+                    query["submodel_id"] = "NON_EXISTENT_SUBMODEL"
+            else:
+                query["submodel_id"] = {"$in": allowed_submodels}
+        else:
+            if submodel_id:
+                query["submodel_id"] = submodel_id
+                
+        if is_active is not None:
+            query["is_active"] = is_active
+            
         if search:
             query["$or"] = [
                 {"sku_no": {"$regex": search, "$options": "i"}},
@@ -1347,9 +1379,11 @@ def create_product_model(
 def get_product_models(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
-    search: str = Query("")
+    search: str = Query(""),
+    brand_id: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None)
 ):
-    return ProductModelOperations.get_models(page=page, limit=limit, search=search)
+    return ProductModelOperations.get_models(page=page, limit=limit, search=search, brand_id=brand_id, is_active=is_active)
 
 @router.put("/models/{model_id}", response_model=dict)
 def update_product_model(
@@ -1404,9 +1438,12 @@ def create_product_submodel(
 def get_product_submodels(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
-    search: str = Query("")
+    search: str = Query(""),
+    model_id: Optional[str] = Query(None),
+    brand_id: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None)
 ):
-    return ProductSubModelOperations.get_submodels(page=page, limit=limit, search=search)
+    return ProductSubModelOperations.get_submodels(page=page, limit=limit, search=search, model_id=model_id, brand_id=brand_id, is_active=is_active)
 
 @router.put("/submodels/{submodel_id}", response_model=dict)
 def update_product_submodel(
@@ -1541,9 +1578,12 @@ def get_product_variants(
     submodel_id: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
-    search: str = Query("")
+    search: str = Query(""),
+    model_id: Optional[str] = Query(None),
+    brand_id: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None)
 ):
-    return ProductVariantOperations.get_variants(submodel_id, page=page, limit=limit, search=search)
+    return ProductVariantOperations.get_variants(submodel_id, page=page, limit=limit, search=search, model_id=model_id, brand_id=brand_id, is_active=is_active)
 
 @router.get("/variants/filter/", response_model=List[dict])
 def filter_product_variants(
