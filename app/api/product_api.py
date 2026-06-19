@@ -358,7 +358,6 @@ class ProductSubModelOperations:
         submodel: schemas.ProductSubModelCreate, 
         image_file: Optional[UploadFile] = None, 
         images: List[Union[UploadFile, str]] = None, 
-        certification: List[Union[UploadFile, str]] = None, 
         current_user: dict = None
     ):
         # Validate parent model
@@ -390,35 +389,17 @@ class ProductSubModelOperations:
             elif isinstance(img, str) and img.strip():
                 product_image_urls.append(img.strip())
 
-        # Save certification
-        cert_urls = []
-        for cert_item in certification:
-            if hasattr(cert_item, "file") and cert_item.filename:
-                os.makedirs(base_dir, exist_ok=True)
-                ext = os.path.splitext(cert_item.filename)[1] or ".pdf"
-                cert_name = f"cert_{len(cert_urls)}{ext}"
-                cert_path = os.path.join(base_dir, cert_name)
-                with open(cert_path, "wb") as buf:
-                    shutil.copyfileobj(cert_item.file, buf)
-                cert_urls.append(f"/qrcodes/Submodels/{submodel_id}/{cert_name}")
-            elif isinstance(cert_item, str) and cert_item.strip():
-                cert_urls.append(cert_item.strip())
-
+        # Removed certification saving logic here
         submodel_dict = {
             "submodel_id": submodel_id,
             "name": submodel.name,
             "model_id": submodel.model_id,
             "is_active": submodel.is_active,
-            "box_weight": submodel.box_weight,
-            "box_dimension": submodel.box_dimension,
-            "carton_weight": submodel.carton_weight,
-            "carton_dimension": submodel.carton_dimension,
             
             # Variant fields stored on submodel
             "short_description": submodel.short_description,
             "long_description": submodel.long_description,
             "product_images": product_image_urls,
-            "certification": cert_urls,
             "visor_type": submodel.visor_type,
             "spoiler": submodel.spoiler,
             "pinlock": submodel.pinlock,
@@ -524,7 +505,6 @@ class ProductSubModelOperations:
         name: Optional[str] = None, 
         image_file: Optional[UploadFile] = None,
         images: Optional[List[Union[UploadFile, str]]] = None,
-        certification: Optional[List[Union[UploadFile, str]]] = None,
         current_user: Optional[dict] = None
     ):
         existing = product_submodels_collection.find_one({"submodel_id": submodel_id})
@@ -537,8 +517,7 @@ class ProductSubModelOperations:
         if submodel.is_active is not None:
             update_data["is_active"] = submodel.is_active
 
-        for field in ["box_weight", "box_dimension", "carton_weight", "carton_dimension",
-                      "short_description", "long_description", 
+        for field in ["short_description", "long_description", 
                       "visor_type", "spoiler", "pinlock", "style"]:
             val = getattr(submodel, field, None)
             if val is not None:
@@ -561,20 +540,7 @@ class ProductSubModelOperations:
                     new_image_urls.append(img.strip())
             update_data["product_images"] = new_image_urls
 
-        if certification is not None:
-            new_cert_urls = []
-            for cert_item in certification:
-                if hasattr(cert_item, "file") and cert_item.filename:
-                    os.makedirs(base_dir, exist_ok=True)
-                    ext = os.path.splitext(cert_item.filename)[1] or ".pdf"
-                    cert_name = f"cert_{len(new_cert_urls)}{ext}"
-                    cert_path = os.path.join(base_dir, cert_name)
-                    with open(cert_path, "wb") as buf:
-                        shutil.copyfileobj(cert_item.file, buf)
-                    new_cert_urls.append(f"/qrcodes/Submodels/{submodel_id}/{cert_name}")
-                elif isinstance(cert_item, str) and cert_item.strip():
-                    new_cert_urls.append(cert_item.strip())
-            update_data["certification"] = new_cert_urls
+
 
         if update_data:
             product_submodels_collection.update_one({"submodel_id": submodel_id}, {"$set": update_data})
@@ -588,7 +554,6 @@ class ProductSubModelOperations:
                 "short_description": updated_submodel.get("short_description"),
                 "long_description": updated_submodel.get("long_description"),
                 "product_images": updated_submodel.get("product_images", []),
-                "certification": updated_submodel.get("certification", []),
                 "visor_type": updated_submodel.get("visor_type"),
                 "spoiler": updated_submodel.get("spoiler"),
                 "pinlock": updated_submodel.get("pinlock"),
@@ -740,7 +705,7 @@ class ProductVariantOperations:
             variant_dict["spoiler"] = submodel.get("spoiler") if submodel else None
             variant_dict["pinlock"] = submodel.get("pinlock") if submodel else None
             variant_dict["style"] = submodel.get("style") if submodel else None
-            variant_dict["certification"] = submodel.get("certification", []) if submodel else []
+            variant_dict["certification"] = model.get("certification", []) if model else []
             variant_dict["chinstrap_lock"] = chinstrap_lock
 
             variant_dict["submodel_name"] = submodel.get("name") if submodel else None
@@ -748,10 +713,10 @@ class ProductVariantOperations:
             variant_dict["submodel_status"] = submodel.get("is_active") if submodel else None
             variant_dict["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-            variant_dict["box_weight"] = submodel.get("box_weight") if submodel else None
-            variant_dict["box_dimension"] = submodel.get("box_dimension") if submodel else None
-            variant_dict["carton_weight"] = submodel.get("carton_weight") if submodel else None
-            variant_dict["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+            variant_dict["box_weight"] = model.get("box_weight") if model else None
+            variant_dict["box_dimension"] = model.get("box_dimension") if model else None
+            variant_dict["carton_weight"] = model.get("carton_weight") if model else None
+            variant_dict["carton_dimension"] = model.get("carton_dimension") if model else None
 
             variant_dict["model_id"] = model.get("model_id") if model else None
             variant_dict["model_name"] = model.get("name") if model else None
@@ -857,10 +822,10 @@ class ProductVariantOperations:
         variant_dict["submodel_status"] = submodel.get("is_active") if submodel else None
         variant_dict["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        variant_dict["box_weight"] = submodel.get("box_weight") if submodel else None
-        variant_dict["box_dimension"] = submodel.get("box_dimension") if submodel else None
-        variant_dict["carton_weight"] = submodel.get("carton_weight") if submodel else None
-        variant_dict["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+        variant_dict["box_weight"] = model.get("box_weight") if model else None
+        variant_dict["box_dimension"] = model.get("box_dimension") if model else None
+        variant_dict["carton_weight"] = model.get("carton_weight") if model else None
+        variant_dict["carton_dimension"] = model.get("carton_dimension") if model else None
 
         variant_dict["model_id"] = model.get("model_id") if model else None
         variant_dict["model_name"] = model.get("name") if model else None
@@ -925,10 +890,10 @@ class ProductVariantOperations:
             v["submodel_status"] = submodel.get("is_active") if submodel else None
             v["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-            v["box_weight"] = submodel.get("box_weight") if submodel else None
-            v["box_dimension"] = submodel.get("box_dimension") if submodel else None
-            v["carton_weight"] = submodel.get("carton_weight") if submodel else None
-            v["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+            v["box_weight"] = model.get("box_weight") if model else None
+            v["box_dimension"] = model.get("box_dimension") if model else None
+            v["carton_weight"] = model.get("carton_weight") if model else None
+            v["carton_dimension"] = model.get("carton_dimension") if model else None
 
             v["model_id"] = model.get("model_id") if model else None
             v["model_name"] = model.get("name") if model else None
@@ -950,7 +915,7 @@ class ProductVariantOperations:
             v["spoiler"] = submodel.get("spoiler") if submodel else None
             v["pinlock"] = submodel.get("pinlock") if submodel else None
             v["style"] = submodel.get("style") if submodel else None
-            v["certification"] = submodel.get("certification", []) if submodel else []
+            v["certification"] = model.get("certification", []) if model else []
             v["chinstrap_lock"] = v.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
             v["brand_id"] = brand.get("brand_id") if brand else None
@@ -1026,10 +991,10 @@ class ProductVariantOperations:
         updated["submodel_status"] = submodel.get("is_active") if submodel else None
         updated["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        updated["box_weight"] = submodel.get("box_weight") if submodel else None
-        updated["box_dimension"] = submodel.get("box_dimension") if submodel else None
-        updated["carton_weight"] = submodel.get("carton_weight") if submodel else None
-        updated["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+        updated["box_weight"] = model.get("box_weight") if model else None
+        updated["box_dimension"] = model.get("box_dimension") if model else None
+        updated["carton_weight"] = model.get("carton_weight") if model else None
+        updated["carton_dimension"] = model.get("carton_dimension") if model else None
 
         updated["model_id"] = model.get("model_id") if model else None
         updated["model_name"] = model.get("name") if model else None
@@ -1044,7 +1009,7 @@ class ProductVariantOperations:
         updated["spoiler"] = submodel.get("spoiler") if submodel else None
         updated["pinlock"] = submodel.get("pinlock") if submodel else None
         updated["style"] = submodel.get("style") if submodel else None
-        updated["certification"] = submodel.get("certification", []) if submodel else []
+        updated["certification"] = model.get("certification", []) if model else []
         updated["chinstrap_lock"] = updated.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
         updated["brand_id"] = brand.get("brand_id") if brand else None
@@ -1170,10 +1135,10 @@ class ProductVariantOperations:
             v["submodel_status"] = submodel.get("is_active") if submodel else None
             v["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-            v["box_weight"] = submodel.get("box_weight") if submodel else None
-            v["box_dimension"] = submodel.get("box_dimension") if submodel else None
-            v["carton_weight"] = submodel.get("carton_weight") if submodel else None
-            v["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+            v["box_weight"] = model.get("box_weight") if model else None
+            v["box_dimension"] = model.get("box_dimension") if model else None
+            v["carton_weight"] = model.get("carton_weight") if model else None
+            v["carton_dimension"] = model.get("carton_dimension") if model else None
 
             v["model_id"] = model.get("model_id") if model else None
             v["model_name"] = model.get("name") if model else None
@@ -1188,7 +1153,7 @@ class ProductVariantOperations:
             v["spoiler"] = submodel.get("spoiler") if submodel else None
             v["pinlock"] = submodel.get("pinlock") if submodel else None
             v["style"] = submodel.get("style") if submodel else None
-            v["certification"] = submodel.get("certification", []) if submodel else []
+            v["certification"] = model.get("certification", []) if model else []
             v["chinstrap_lock"] = v.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
             v["brand_id"] = brand.get("brand_id") if brand else None
@@ -1227,10 +1192,10 @@ class ProductVariantOperations:
         variant["submodel_status"] = submodel.get("is_active") if submodel else None
         variant["submodel_is_active"] = submodel.get("is_active") if submodel else None
 
-        variant["box_weight"] = submodel.get("box_weight") if submodel else None
-        variant["box_dimension"] = submodel.get("box_dimension") if submodel else None
-        variant["carton_weight"] = submodel.get("carton_weight") if submodel else None
-        variant["carton_dimension"] = submodel.get("carton_dimension") if submodel else None
+        variant["box_weight"] = model.get("box_weight") if model else None
+        variant["box_dimension"] = model.get("box_dimension") if model else None
+        variant["carton_weight"] = model.get("carton_weight") if model else None
+        variant["carton_dimension"] = model.get("carton_dimension") if model else None
 
         variant["model_id"] = model.get("model_id") if model else None
         variant["model_name"] = model.get("name") if model else None
@@ -1252,7 +1217,7 @@ class ProductVariantOperations:
         variant["spoiler"] = submodel.get("spoiler") if submodel else None
         variant["pinlock"] = submodel.get("pinlock") if submodel else None
         variant["style"] = submodel.get("style") if submodel else None
-        variant["certification"] = submodel.get("certification", []) if submodel else []
+        variant["certification"] = model.get("certification", []) if model else []
         variant["chinstrap_lock"] = variant.get("chinstrap_lock") or (model.get("chinstrap_lock") if model else None)
 
         variant["brand_id"] = brand.get("brand_id") if brand else None
@@ -1400,10 +1365,6 @@ def create_product_submodel(
     name: str = Form(...),
     model_id: str = Form(...),
     is_active: bool = Form(True),
-    box_weight: Optional[float] = Form(None),
-    box_dimension: Optional[str] = Form(None),
-    carton_weight: Optional[float] = Form(None),
-    carton_dimension: Optional[str] = Form(None),
     
     # Variant fields at submodel level
     short_description: Optional[str] = Form(None),
@@ -1412,7 +1373,6 @@ def create_product_submodel(
     spoiler: Optional[str] = Form(None),
     pinlock: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
-    certification: Optional[Union[List[str], str]] = Form(None),
     style: Optional[str] = Form(None),
     
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
@@ -1423,58 +1383,21 @@ def create_product_submodel(
     elif hasattr(images, "file") and getattr(images, "filename", None):
         valid_images = [images]
 
-    valid_certs = []
-    if certification is not None:
-        if isinstance(certification, list):
-            for c in certification:
-                if isinstance(c, str) and c.strip():
-                    if c.strip().startswith("[") and c.strip().endswith("]"):
-                        import json
-                        try:
-                            parsed = json.loads(c.strip())
-                            if isinstance(parsed, list):
-                                valid_certs.extend([str(item).strip() for item in parsed if str(item).strip()])
-                            else:
-                                valid_certs.append(str(parsed).strip())
-                        except Exception:
-                            valid_certs.append(c.strip())
-                    else:
-                        valid_certs.append(c.strip())
-        elif isinstance(certification, str):
-            if certification.strip().startswith("[") and certification.strip().endswith("]"):
-                import json
-                try:
-                    parsed = json.loads(certification.strip())
-                    if isinstance(parsed, list):
-                        valid_certs.extend([str(item).strip() for item in parsed if str(item).strip()])
-                    else:
-                        valid_certs.append(str(parsed).strip())
-                except Exception:
-                    valid_certs.append(certification.strip())
-            elif "," in certification:
-                valid_certs = [c.strip() for c in certification.split(",") if c.strip()]
-            elif certification.strip():
-                valid_certs.append(certification.strip())
 
     submodel_schema = schemas.ProductSubModelCreate(
         name=name,
         model_id=model_id,
         is_active=is_active,
-        box_weight=box_weight,
-        box_dimension=box_dimension,
-        carton_weight=carton_weight,
-        carton_dimension=carton_dimension,
         short_description=short_description,
         long_description=long_description,
         product_images=[],
-        certification=[],
         visor_type=visor_type,
         spoiler=spoiler,
         pinlock=pinlock,
         style=style
     )
     return ProductSubModelOperations.create_submodel(
-        submodel=submodel_schema, images=valid_images, certification=valid_certs, current_user=current_user
+        submodel=submodel_schema, images=valid_images, current_user=current_user
     )
 
 @router.get("/submodels/", response_model=dict)
@@ -1490,10 +1413,6 @@ def update_product_submodel(
     submodel_id: str,
     name: Optional[str] = Form(None),
     is_active: Optional[bool] = Form(None),
-    box_weight: Optional[float] = Form(None),
-    box_dimension: Optional[str] = Form(None),
-    carton_weight: Optional[float] = Form(None),
-    carton_dimension: Optional[str] = Form(None),
     
     # New variant fields at submodel level
     short_description: Optional[str] = Form(None),
@@ -1502,7 +1421,6 @@ def update_product_submodel(
     spoiler: Optional[str] = Form(None),
     pinlock: Optional[str] = Form(None),
     images: Optional[list[UploadFile]] = File(default=None),
-    certification: Optional[Union[List[str], str]] = Form(None),
     style: Optional[str] = Form(None),
     
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
@@ -1515,52 +1433,15 @@ def update_product_submodel(
         elif hasattr(images, "file") and getattr(images, "filename", None):
             valid_images = [images]
 
-    valid_certs = None
-    if certification is not None:
-        valid_certs = []
-        if isinstance(certification, list):
-            for c in certification:
-                if isinstance(c, str) and c.strip():
-                    if c.strip().startswith("[") and c.strip().endswith("]"):
-                        import json
-                        try:
-                            parsed = json.loads(c.strip())
-                            if isinstance(parsed, list):
-                                valid_certs.extend([str(item).strip() for item in parsed if str(item).strip()])
-                            else:
-                                valid_certs.append(str(parsed).strip())
-                        except Exception:
-                            valid_certs.append(c.strip())
-                    else:
-                        valid_certs.append(c.strip())
-        elif isinstance(certification, str):
-            if certification.strip().startswith("[") and certification.strip().endswith("]"):
-                import json
-                try:
-                    parsed = json.loads(certification.strip())
-                    if isinstance(parsed, list):
-                        valid_certs.extend([str(item).strip() for item in parsed if str(item).strip()])
-                    else:
-                        valid_certs.append(str(parsed).strip())
-                except Exception:
-                    valid_certs.append(certification.strip())
-            elif "," in certification:
-                valid_certs = [c.strip() for c in certification.split(",") if c.strip()]
-            elif certification.strip():
-                valid_certs.append(certification.strip())
+
 
     submodel_schema = schemas.ProductSubModelUpdate(
         is_active=is_active,
-        box_weight=box_weight,
-        box_dimension=box_dimension,
-        carton_weight=carton_weight,
-        carton_dimension=carton_dimension,
         
         # New variant fields stored on submodel
         short_description=short_description,
         long_description=long_description,
         product_images=None,
-        certification=None,
         visor_type=visor_type,
         spoiler=spoiler,
         pinlock=pinlock,
@@ -1571,7 +1452,6 @@ def update_product_submodel(
         submodel=submodel_schema,
         name=name,
         images=valid_images,
-        certification=valid_certs,
         current_user=current_user
     )
 

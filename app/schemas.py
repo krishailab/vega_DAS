@@ -753,24 +753,29 @@ class ProductModelCreate(BaseModel):
     subcategory_id: str
     is_active: bool = True
     chinstrap_lock: Optional[str] = None
+    box_weight: Optional[float] = None
+    box_dimension: Optional[str] = None
+    carton_weight: Optional[float] = None
+    carton_dimension: Optional[str] = None
+    certification: list[str] = []
 
 class ProductModelUpdate(BaseModel):
     is_active: Optional[bool] = None
     chinstrap_lock: Optional[str] = None
+    box_weight: Optional[float] = None
+    box_dimension: Optional[str] = None
+    carton_weight: Optional[float] = None
+    carton_dimension: Optional[str] = None
+    certification: Optional[list[str]] = None
 
 class ProductSubModelCreate(BaseModel):
     name: str
     model_id: str
     is_active: bool = True
-    box_weight: Optional[float] = None
-    box_dimension: Optional[str] = None
-    carton_weight: Optional[float] = None
-    carton_dimension: Optional[str] = None
     # Variant fields stored on submodel
     short_description: Optional[str] = None
     long_description: Optional[str] = None
     product_images: list[str] = []
-    certification: list[str] = []  # List of certification file URLs
     visor_type: Optional[str] = None
     spoiler: Optional[str] = None
     pinlock: Optional[str] = None
@@ -778,14 +783,9 @@ class ProductSubModelCreate(BaseModel):
 
 class ProductSubModelUpdate(BaseModel):
     is_active: Optional[bool] = None
-    box_weight: Optional[float] = None
-    box_dimension: Optional[str] = None
-    carton_weight: Optional[float] = None
-    carton_dimension: Optional[str] = None
     short_description: Optional[str] = None
     long_description: Optional[str] = None
     product_images: Optional[list[str]] = None
-    certification: Optional[list[str]] = None
     visor_type: Optional[str] = None
     spoiler: Optional[str] = None
     pinlock: Optional[str] = None
