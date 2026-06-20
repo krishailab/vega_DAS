@@ -104,19 +104,22 @@ brand_a = ProductBrandOperations.create_brand(
     description="Premium Helmets & Accessories",
     logo=None,
     is_active=True,
+    size_master=[["xs", 600, f"PCAT{yy}AAAA0001"], ["s", 800, f"PCAT{yy}AAAA0001"], ["xl", 1200, f"PCAT{yy}AAAA0001"]],
     current_user=admin_user
 )
 assert brand_a["brand_id"] == f"PBRD{yy}AAAA0001"
 assert brand_a["is_active"] is True
-print(f"✓ ProductBrand created successfully with ID PBRD{yy}AAAA0001!")
+assert len(brand_a["size_master"]) == 3
+print(f"✓ ProductBrand created successfully with ID PBRD{yy}AAAA0001 and size_master!")
 
 # Update Brand Active Status
 updated_brand = ProductBrandOperations.update_brand(
     f"PBRD{yy}AAAA0001",
-    is_active=False
+    ProductBrandUpdate(is_active=True, size_master=[["xs", 600, f"PCAT{yy}AAAA0001"], ["s", 800, f"PCAT{yy}AAAA0001"], ["xl", 1200, f"PCAT{yy}AAAA0001"], ["xxl", 1400, f"PCAT{yy}AAAA0001"]])
 )
-assert updated_brand["is_active"] is False
-print("✓ ProductBrand updated successfully to inactive status!")
+assert updated_brand["is_active"] is True
+assert len(updated_brand["size_master"]) == 4
+print("✓ ProductBrand updated successfully with new size_master!")
 
 # 4. Test Model
 print("\n4. Testing Model CRU and active status...")
@@ -228,8 +231,7 @@ variant_a2 = ProductVariantOperations.create_variant(
         long_description="High impact ABS material shell helmet with red decals, size Large.",
         product_images=["https://cdn.example.com/vega-red-l.jpg"],
         color="Red",
-        size_name="Large",
-        size=60,
+        size_name="XS",
         finish="Gloss",
         certification=["DOT", "ISI"],
         visor_type="Double Visor",
@@ -242,8 +244,9 @@ variant_a2 = ProductVariantOperations.create_variant(
     current_user=admin_user
 )
 assert variant_a2["variant_id"] == f"PVAR{yy}AAAA0002"
+assert variant_a2["size"] == 600
 assert variant_a2["mrp"] == {"INR": 1900.0}
-print(f"✓ Sister ProductVariant created with ID {variant_a2['variant_id']}")
+print(f"✓ Sister ProductVariant created with ID {variant_a2['variant_id']} (size auto-resolved to 600)!")
 
 # Fetch detail of variant_a and verify sister_variants list contains variant_a2 details
 detail_a = ProductVariantOperations.get_variant_detail(f"PVAR{yy}AAAA0001")
@@ -251,7 +254,7 @@ assert "sister_variants" in detail_a
 assert len(detail_a["sister_variants"]) == 1
 assert detail_a["sister_variants"][0]["variant_id"] == f"PVAR{yy}AAAA0002"
 assert detail_a["sister_variants"][0]["sku_no"] == "VEGA-BOLT-L-RED"
-assert detail_a["sister_variants"][0]["size"] == 60
+assert detail_a["sister_variants"][0]["size"] == 600
 assert detail_a["submodel_image"] == "https://cdn.example.com/submodel-red-decal.png"
 print("✓ Variant detail with sister_variants resolved and asserted successfully!")
 

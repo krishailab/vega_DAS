@@ -742,9 +742,13 @@ class ProductBrandCreate(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: bool = True
+    size_master: Optional[list[list]] = None
 
 class ProductBrandUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
     is_active: Optional[bool] = None
+    size_master: Optional[list[list]] = None
 
 class ProductModelCreate(BaseModel):
     name: str

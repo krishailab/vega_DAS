@@ -14,6 +14,47 @@ from ..database import (
 
 router = APIRouter(prefix="/api/v1/product-master", tags=["Product Master"])
 
+def validate_size_master(size_master: Optional[Union[list, str]]) -> list:
+    if size_master is None:
+        return []
+    
+    parsed = size_master
+    if isinstance(size_master, str):
+        try:
+            import json
+            parsed = json.loads(size_master)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid size_master format. Must be a valid JSON array.")
+    
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="size_master must be a list")
+        
+    for item in parsed:
+        if not isinstance(item, list) or len(item) != 3:
+            raise HTTPException(status_code=400, detail="Each size_master entry must be a list of 3 elements: [size_name, size, category_id]")
+        if not isinstance(item[0], str):
+            raise HTTPException(status_code=400, detail="Size name must be a string")
+        if not isinstance(item[1], (int, float)):
+            raise HTTPException(status_code=400, detail="Size value must be a number")
+        if not isinstance(item[2], str):
+            raise HTTPException(status_code=400, detail="Category ID must be a string")
+        category_id = item[2].strip()
+        if not product_categories_collection.find_one({"category_id": category_id}):
+            raise HTTPException(status_code=400, detail=f"Category with ID '{category_id}' does not exist")
+            
+    return parsed
+
+def resolve_size_from_brand(brand: Optional[dict], category_id: Optional[str], size_name: Optional[str]) -> Optional[int]:
+    if not brand or not category_id or not size_name:
+        return None
+    size_master = brand.get("size_master", []) or []
+    for entry in size_master:
+        if len(entry) == 3:
+            entry_size_name, entry_size, entry_category_id = entry
+            if str(entry_size_name).strip().lower() == str(size_name).strip().lower() and str(entry_category_id).strip() == str(category_id).strip():
+                return int(entry_size)
+    return None
+
 class ProductCategoryOperations:
     @staticmethod
     def create_category(category: schemas.ProductCategoryCreate, current_user: dict):
@@ -146,6 +187,7 @@ class ProductBrandOperations:
         description: Optional[str],
         logo: Optional[UploadFile],
         is_active: bool,
+        size_master: Optional[Union[list, str]],
         current_user: dict
     ):
         if product_brands_collection.find_one({"name": name}):
@@ -163,12 +205,15 @@ class ProductBrandOperations:
                 shutil.copyfileobj(logo.file, buf)
             logo_url = f"/qrcodes/Brands/{brand_id}/logo{ext}"
 
+        parsed_size_master = validate_size_master(size_master)
+
         brand_dict = {
             "brand_id": brand_id,
             "name": name,
             "description": description,
             "logo_url": logo_url,
             "is_active": is_active,
+            "size_master": parsed_size_master,
             "created_by": current_user["user_id"],
             "created_at": utils.get_current_time()
         }
@@ -203,15 +248,21 @@ class ProductBrandOperations:
     @staticmethod
     def update_brand(
         brand_id: str,
-        is_active: Optional[bool]
+        brand: schemas.ProductBrandUpdate
     ):
         existing = product_brands_collection.find_one({"brand_id": brand_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Product brand not found")
 
         update_data = {}
-        if is_active is not None:
-            update_data["is_active"] = is_active
+        if brand.is_active is not None:
+            update_data["is_active"] = brand.is_active
+        if brand.name is not None:
+            update_data["name"] = brand.name
+        if brand.description is not None:
+            update_data["description"] = brand.description
+        if brand.size_master is not None:
+            update_data["size_master"] = validate_size_master(brand.size_master)
 
         if update_data:
             product_brands_collection.update_one({"brand_id": brand_id}, {"$set": update_data})
@@ -613,15 +664,34 @@ class ProductVariantOperations:
                     uploaded_files[img.filename] = img
 
         # Check SKU uniqueness across all submodels before inserting anything
+        category_id = model.get("category_id") if model else None
         for item in parsed_variants:
             if isinstance(item, dict):
                 sku_no = item.get("sku_no")
-                if not sku_no or not item.get("size_name") or item.get("size") is None:
-                    raise HTTPException(status_code=400, detail="Each variant object must contain size_name, size, and sku_no")
+                size_name = item.get("size_name")
+                size = item.get("size")
             else:
                 if len(item) < 3:
                     raise HTTPException(status_code=400, detail="Each variant must contain at least size_name, size, and sku_no")
+                size_name = item[0]
+                size = item[1]
                 sku_no = item[2]
+
+            if not sku_no or not size_name:
+                raise HTTPException(status_code=400, detail="Each variant object must contain size_name and sku_no")
+
+            resolved_size = resolve_size_from_brand(brand, category_id, size_name)
+            if resolved_size is not None:
+                size = resolved_size
+
+            if size is None:
+                raise HTTPException(status_code=400, detail=f"Size for size_name '{size_name}' could not be resolved from size master and was not provided.")
+
+            if isinstance(item, dict):
+                item["size"] = size
+            else:
+                item[1] = size
+
             existing_var = product_variants_collection.find_one({"sku_no": sku_no})
             if existing_var:
                 raise HTTPException(status_code=400, detail=f"Product variant with SKU '{sku_no}' already exists")
@@ -762,6 +832,17 @@ class ProductVariantOperations:
             raise HTTPException(status_code=404, detail="Product submodel not found")
 
         variant_dict = variant.model_dump()
+        model = product_models_collection.find_one({"model_id": submodel.get("model_id")}) if submodel else None
+        brand = product_brands_collection.find_one({"brand_id": model["brand_id"]}) if model else None
+        category_id = model.get("category_id") if model else None
+
+        resolved_size = resolve_size_from_brand(brand, category_id, variant.size_name)
+        if resolved_size is not None:
+            variant_dict["size"] = resolved_size
+
+        if variant_dict.get("size") is None:
+            raise HTTPException(status_code=400, detail=f"Size for size_name '{variant.size_name}' could not be resolved from size master and was not provided.")
+
         # Resolve chinstrap_lock from model if not provided on the variant
         # Note: chinstrap_lock is no longer stored on the variant DB document but resolved dynamically
         variant_id = utils.generate_custom_id("PVAR", product_variants_collection, "variant_id")
@@ -1347,9 +1428,10 @@ def create_product_brand(
     description: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     is_active: bool = Form(True),
+    size_master: Optional[str] = Form(None),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
-    return ProductBrandOperations.create_brand(name, description, logo, is_active, current_user)
+    return ProductBrandOperations.create_brand(name, description, logo, is_active, size_master, current_user)
 
 @router.get("/brands/", response_model=dict)
 def get_product_brands(
@@ -1365,7 +1447,7 @@ def update_product_brand(
     brand: schemas.ProductBrandUpdate,
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
-    return ProductBrandOperations.update_brand(brand_id, brand.is_active)
+    return ProductBrandOperations.update_brand(brand_id, brand)
 
 # Models
 @router.post("/models/", response_model=dict, status_code=status.HTTP_201_CREATED)
