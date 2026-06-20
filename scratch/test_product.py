@@ -115,6 +115,9 @@ print(f"✓ ProductBrand created successfully with ID PBRD{yy}AAAA0001 and size_
 # Update Brand Active Status
 updated_brand = ProductBrandOperations.update_brand(
     brand_id=f"PBRD{yy}AAAA0001",
+    name=None,
+    description=None,
+    logo=None,
     is_active=True,
     size_master=[["xs", 600, f"PCAT{yy}AAAA0001"], ["s", 800, f"PCAT{yy}AAAA0001"], ["xl", 1200, f"PCAT{yy}AAAA0001"], ["xxl", 1400, f"PCAT{yy}AAAA0001"]]
 )
@@ -203,19 +206,13 @@ variant_a = ProductVariantOperations.create_variant(
         spoiler="Integrated",
         chinstrap_lock="Quick Release",
         pinlock="Optional",
+        mrp={"INR": 1850.0},
         is_active=True
     ),
     current_user=admin_user
 )
 assert variant_a["variant_id"] == f"PVAR{yy}AAAA0001"
 assert variant_a["sku_no"] == "VEGA-BOLT-M-RED"
-
-# Use the new API to set variant MRP and currency
-from app.schemas import VariantMRPUpdate
-ProductVariantOperations.update_variants_mrp(
-    VariantMRPUpdate(variant_ids=[variant_a["variant_id"]], mrp={"INR": 1850.0})
-)
-variant_a = ProductVariantOperations.get_variant_detail(variant_a["variant_id"])
 assert variant_a["mrp"] == {"INR": 1850.0}
 assert variant_a["carton_box_size"] == 4
 assert variant_a["carton_barcode"] == "8901234567890-C"
@@ -245,18 +242,14 @@ variant_a2 = ProductVariantOperations.create_variant(
         spoiler="Integrated",
         chinstrap_lock="Quick Release",
         pinlock="Optional",
+        mrp={"INR": 1900.0},
         is_active=True
     ),
     current_user=admin_user
 )
 assert variant_a2["variant_id"] == f"PVAR{yy}AAAA0002"
 assert variant_a2["size"] == 600
-
-# Set MRP using the update operation
-ProductVariantOperations.update_variants_mrp(
-    VariantMRPUpdate(variant_ids=[variant_a2["variant_id"]], mrp={"INR": 1900.0})
-)
-variant_a2 = ProductVariantOperations.get_variant_detail(variant_a2["variant_id"])
+assert variant_a2["mrp"] == {"INR": 1900.0}
 print(f"✓ Sister ProductVariant created with ID {variant_a2['variant_id']} (size auto-resolved to 600)!")
 
 # Fetch detail of variant_a and verify sister_variants list contains variant_a2 details
@@ -336,16 +329,13 @@ updated_variant = ProductVariantOperations.update_variant(
     f"PVAR{yy}AAAA0001",
     ProductVariantUpdate(
         is_active=False,
+        mrp={"INR": 2200.0},
         carton_box_size=6,
         carton_barcode="8901234567890-C-UPDATED",
         size=62,
         certification=["DOT", "ISI", "ECE"]
     )
 )
-ProductVariantOperations.update_variants_mrp(
-    VariantMRPUpdate(variant_ids=[f"PVAR{yy}AAAA0001"], mrp={"INR": 2200.0})
-)
-updated_variant = ProductVariantOperations.get_variant_detail(f"PVAR{yy}AAAA0001")
 assert updated_variant["is_active"] is False
 assert updated_variant["mrp"] == {"INR": 2200.0}
 assert updated_variant["carton_box_size"] == 6
@@ -353,6 +343,31 @@ assert updated_variant["carton_barcode"] == "8901234567890-C-UPDATED"
 assert updated_variant["size"] == 62
 assert updated_variant["certification"] == ["DOT", "ISI", "ECE"]
 print("✓ ProductVariant updated successfully with new MRP, Carton Box Size, Carton Barcode, size, and certification!")
+
+# 7. Test Bulk MRP updates
+print("\n7. Testing Bulk Variant MRP and Multi-Currency update...")
+bulk_res = ProductVariantOperations.update_mrp_bulk(
+    variant_ids=[f"PVAR{yy}AAAA0001", f"PVAR{yy}AAAA0002"],
+    mrp={"USD": 25.0, "EUR": 22.0}
+)
+assert bulk_res["status"] == "success"
+assert bulk_res["updated_count"] == 2
+
+# Verify updates merged correctly
+v1_updated = product_variants_collection.find_one({"variant_id": f"PVAR{yy}AAAA0001"})
+v2_updated = product_variants_collection.find_one({"variant_id": f"PVAR{yy}AAAA0002"})
+
+assert "USD" in v1_updated["mrp"]
+assert v1_updated["mrp"]["USD"] == 25.0
+assert "EUR" in v1_updated["mrp"]
+assert v1_updated["mrp"]["EUR"] == 22.0
+
+assert "USD" in v2_updated["mrp"]
+assert v2_updated["mrp"]["USD"] == 25.0
+assert "EUR" in v2_updated["mrp"]
+assert v2_updated["mrp"]["EUR"] == 22.0
+
+print("✓ Bulk Variant MRP/currency update passed!")
 
 # Clean up
 product_categories_collection.delete_many({})

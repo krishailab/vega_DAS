@@ -805,6 +805,7 @@ class ProductVariantCreate(BaseModel):
     size: Optional[int] = None
     finish: Optional[str] = None
     product_images: list[str] = []
+    mrp: Optional[dict[str, float]] = None
     is_active: bool = True
 
 class ProductVariantUpdate(BaseModel):
@@ -816,10 +817,12 @@ class ProductVariantUpdate(BaseModel):
     size: Optional[int] = None
     finish: Optional[str] = None
     product_images: Optional[list[str]] = None
+    mrp: Optional[dict[str, float]] = None
 
-class VariantMRPUpdate(BaseModel):
+
+class VariantMRPUpdateBulk(BaseModel):
     variant_ids: list[str]
-    mrp: dict[str, float] = {"INR": 0.0}
+    mrp: dict[str, float]
 
 
 class PlantBase(BaseModel):

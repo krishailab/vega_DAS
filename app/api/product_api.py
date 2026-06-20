@@ -248,11 +248,11 @@ class ProductBrandOperations:
     @staticmethod
     def update_brand(
         brand_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        logo: Optional[UploadFile] = None,
-        is_active: Optional[bool] = None,
-        size_master: Optional[Union[list, str]] = None
+        name: Optional[str],
+        description: Optional[str],
+        logo: Optional[UploadFile],
+        is_active: Optional[bool],
+        size_master: Optional[Union[list, str]]
     ):
         existing = product_brands_collection.find_one({"brand_id": brand_id})
         if not existing:
@@ -724,6 +724,7 @@ class ProductVariantOperations:
                 gs1_barcode = item.get("gs1_barcode")
                 carton_barcode = item.get("carton_barcode")
                 finish = item.get("finish")
+                mrp = item.get("mrp")
                 style = item.get("style") if item.get("style") is not None else submodel.get("style")
                 short_description = item.get("short_description") if item.get("short_description") is not None else submodel.get("short_description")
                 long_description = item.get("long_description") if item.get("long_description") is not None else submodel.get("long_description")
@@ -741,6 +742,7 @@ class ProductVariantOperations:
                 gs1_barcode = None
                 carton_barcode = None
                 finish = None
+                mrp = None
                 style = submodel.get("style")
                 short_description = submodel.get("short_description")
                 long_description = submodel.get("long_description")
@@ -781,6 +783,7 @@ class ProductVariantOperations:
                 "product_images": variant_images,
                 "color": variant_color,
                 "finish": finish,
+                "mrp": mrp,
                 
                 "created_by": current_user["user_id"] if current_user else "SYSTEM",
                 "created_at": utils.get_current_time()
@@ -1382,16 +1385,19 @@ class ProductVariantOperations:
         return variant
 
     @staticmethod
-    def update_variants_mrp(update_data: schemas.VariantMRPUpdate):
-        res = product_variants_collection.update_many(
-            {"variant_id": {"$in": update_data.variant_ids}},
-            {"$set": {"mrp": update_data.mrp}}
-        )
-        return {
-            "status": "success",
-            "message": f"Successfully updated MRP for {res.modified_count} variants.",
-            "updated_count": res.modified_count
-        }
+    def update_mrp_bulk(variant_ids: list[str], mrp: dict[str, float]):
+        updated_count = 0
+        for variant_id in variant_ids:
+            variant_doc = product_variants_collection.find_one({"variant_id": variant_id})
+            if variant_doc:
+                existing_mrp = variant_doc.get("mrp") or {}
+                existing_mrp.update(mrp)
+                product_variants_collection.update_one(
+                    {"variant_id": variant_id},
+                    {"$set": {"mrp": existing_mrp}}
+                )
+                updated_count += 1
+        return {"status": "success", "updated_count": updated_count}
 
 
 
@@ -1473,7 +1479,14 @@ def update_product_brand(
     size_master: Optional[str] = Form(None),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
-    return ProductBrandOperations.update_brand(brand_id, name, description, logo, is_active, size_master)
+    return ProductBrandOperations.update_brand(
+        brand_id=brand_id,
+        name=name,
+        description=description,
+        logo=logo,
+        is_active=is_active,
+        size_master=size_master
+    )
 
 # Models
 @router.post("/models/", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -1630,17 +1643,11 @@ def create_product_variants(
 
     return ProductVariantOperations.create_variants_list(submodel_id, parsed_variants, valid_images, current_user)
 
-@router.put("/variants/mrp/", response_model=dict)
-def update_variants_mrp_endpoint(
-    data: schemas.VariantMRPUpdate,
-    current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
-):
-    return ProductVariantOperations.update_variants_mrp(data)
-
 @router.put("/variants/{variant_id}", response_model=dict)
 def update_product_variant(
     variant_id: str,
     is_active: Optional[bool] = Form(None),
+    mrp: Optional[str] = Form(None),
     carton_barcode: Optional[str] = Form(None),
     gs1_barcode: Optional[str] = Form(None),
     size: Optional[int] = Form(None),
@@ -1650,6 +1657,21 @@ def update_product_variant(
     images: Optional[list[UploadFile]] = File(default=None),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
+    parsed_mrp = None
+    if mrp is not None:
+        mrp_str = str(mrp).strip()
+        if mrp_str.startswith("{") and mrp_str.endswith("}"):
+            import json
+            try:
+                parsed_mrp = json.loads(mrp_str)
+            except Exception:
+                parsed_mrp = {"INR": float(mrp_str)}
+        else:
+            try:
+                parsed_mrp = {"INR": float(mrp_str)}
+            except Exception:
+                parsed_mrp = None
+
     valid_images = None
     if images is not None:
         valid_images = []
@@ -1666,7 +1688,8 @@ def update_product_variant(
         size_name=size_name,
         size=size,
         finish=finish,
-        product_images=None
+        product_images=None,
+        mrp=parsed_mrp
     )
 
     return ProductVariantOperations.update_variant(variant_id, update_schema, valid_images)
@@ -1761,3 +1784,11 @@ def get_product_submodel(submodel_id: str):
     doc["subcategory_id"] = subcategory.get("subcategory_id") if subcategory else None
     doc["subcategory_name"] = subcategory.get("name") if subcategory else None
     return doc
+
+
+@router.put("/variants/mrp/", response_model=dict)
+def update_product_variant_mrp_bulk(
+    payload: schemas.VariantMRPUpdateBulk,
+    current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
+):
+    return ProductVariantOperations.update_mrp_bulk(payload.variant_ids, payload.mrp)
