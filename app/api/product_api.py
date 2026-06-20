@@ -248,21 +248,34 @@ class ProductBrandOperations:
     @staticmethod
     def update_brand(
         brand_id: str,
-        brand: schemas.ProductBrandUpdate
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        logo: Optional[UploadFile] = None,
+        is_active: Optional[bool] = None,
+        size_master: Optional[Union[list, str]] = None
     ):
         existing = product_brands_collection.find_one({"brand_id": brand_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Product brand not found")
 
         update_data = {}
-        if brand.is_active is not None:
-            update_data["is_active"] = brand.is_active
-        if brand.name is not None:
-            update_data["name"] = brand.name
-        if brand.description is not None:
-            update_data["description"] = brand.description
-        if brand.size_master is not None:
-            update_data["size_master"] = validate_size_master(brand.size_master)
+        if is_active is not None:
+            update_data["is_active"] = is_active
+        if name is not None:
+            update_data["name"] = name
+        if description is not None:
+            update_data["description"] = description
+        if size_master is not None:
+            update_data["size_master"] = validate_size_master(size_master)
+
+        if logo and logo.filename:
+            base_dir = os.path.join("qrcodes", "Brands", brand_id)
+            os.makedirs(base_dir, exist_ok=True)
+            ext = os.path.splitext(logo.filename)[1] or ".png"
+            logo_path = os.path.join(base_dir, f"logo{ext}")
+            with open(logo_path, "wb") as buf:
+                shutil.copyfileobj(logo.file, buf)
+            update_data["logo_url"] = f"/qrcodes/Brands/{brand_id}/logo{ext}"
 
         if update_data:
             product_brands_collection.update_one({"brand_id": brand_id}, {"$set": update_data})
@@ -711,7 +724,6 @@ class ProductVariantOperations:
                 gs1_barcode = item.get("gs1_barcode")
                 carton_barcode = item.get("carton_barcode")
                 finish = item.get("finish")
-                mrp = item.get("mrp")
                 style = item.get("style") if item.get("style") is not None else submodel.get("style")
                 short_description = item.get("short_description") if item.get("short_description") is not None else submodel.get("short_description")
                 long_description = item.get("long_description") if item.get("long_description") is not None else submodel.get("long_description")
@@ -729,7 +741,6 @@ class ProductVariantOperations:
                 gs1_barcode = None
                 carton_barcode = None
                 finish = None
-                mrp = None
                 style = submodel.get("style")
                 short_description = submodel.get("short_description")
                 long_description = submodel.get("long_description")
@@ -770,7 +781,6 @@ class ProductVariantOperations:
                 "product_images": variant_images,
                 "color": variant_color,
                 "finish": finish,
-                "mrp": mrp,
                 
                 "created_by": current_user["user_id"] if current_user else "SYSTEM",
                 "created_at": utils.get_current_time()
@@ -1371,6 +1381,18 @@ class ProductVariantOperations:
         variant["sister_variants"] = sister_variants
         return variant
 
+    @staticmethod
+    def update_variants_mrp(update_data: schemas.VariantMRPUpdate):
+        res = product_variants_collection.update_many(
+            {"variant_id": {"$in": update_data.variant_ids}},
+            {"$set": {"mrp": update_data.mrp}}
+        )
+        return {
+            "status": "success",
+            "message": f"Successfully updated MRP for {res.modified_count} variants.",
+            "updated_count": res.modified_count
+        }
+
 
 
 # Categories
@@ -1444,10 +1466,14 @@ def get_product_brands(
 @router.put("/brands/{brand_id}", response_model=dict)
 def update_product_brand(
     brand_id: str,
-    brand: schemas.ProductBrandUpdate,
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    logo: Optional[UploadFile] = File(None),
+    is_active: Optional[bool] = Form(None),
+    size_master: Optional[str] = Form(None),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
-    return ProductBrandOperations.update_brand(brand_id, brand)
+    return ProductBrandOperations.update_brand(brand_id, name, description, logo, is_active, size_master)
 
 # Models
 @router.post("/models/", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -1604,11 +1630,17 @@ def create_product_variants(
 
     return ProductVariantOperations.create_variants_list(submodel_id, parsed_variants, valid_images, current_user)
 
+@router.put("/variants/mrp/", response_model=dict)
+def update_variants_mrp_endpoint(
+    data: schemas.VariantMRPUpdate,
+    current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
+):
+    return ProductVariantOperations.update_variants_mrp(data)
+
 @router.put("/variants/{variant_id}", response_model=dict)
 def update_product_variant(
     variant_id: str,
     is_active: Optional[bool] = Form(None),
-    mrp: Optional[str] = Form(None),
     carton_barcode: Optional[str] = Form(None),
     gs1_barcode: Optional[str] = Form(None),
     size: Optional[int] = Form(None),
@@ -1618,21 +1650,6 @@ def update_product_variant(
     images: Optional[list[UploadFile]] = File(default=None),
     current_user: dict = Depends(auth.RoleChecker(["Super Admin", "Master Admin", "B2B Admin"]))
 ):
-    parsed_mrp = None
-    if mrp is not None:
-        mrp_str = str(mrp).strip()
-        if mrp_str.startswith("{") and mrp_str.endswith("}"):
-            import json
-            try:
-                parsed_mrp = json.loads(mrp_str)
-            except Exception:
-                parsed_mrp = {"INR": float(mrp_str)}
-        else:
-            try:
-                parsed_mrp = {"INR": float(mrp_str)}
-            except Exception:
-                parsed_mrp = None
-
     valid_images = None
     if images is not None:
         valid_images = []
@@ -1649,8 +1666,7 @@ def update_product_variant(
         size_name=size_name,
         size=size,
         finish=finish,
-        product_images=None,
-        mrp=parsed_mrp
+        product_images=None
     )
 
     return ProductVariantOperations.update_variant(variant_id, update_schema, valid_images)

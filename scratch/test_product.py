@@ -114,8 +114,9 @@ print(f"✓ ProductBrand created successfully with ID PBRD{yy}AAAA0001 and size_
 
 # Update Brand Active Status
 updated_brand = ProductBrandOperations.update_brand(
-    f"PBRD{yy}AAAA0001",
-    ProductBrandUpdate(is_active=True, size_master=[["xs", 600, f"PCAT{yy}AAAA0001"], ["s", 800, f"PCAT{yy}AAAA0001"], ["xl", 1200, f"PCAT{yy}AAAA0001"], ["xxl", 1400, f"PCAT{yy}AAAA0001"]])
+    brand_id=f"PBRD{yy}AAAA0001",
+    is_active=True,
+    size_master=[["xs", 600, f"PCAT{yy}AAAA0001"], ["s", 800, f"PCAT{yy}AAAA0001"], ["xl", 1200, f"PCAT{yy}AAAA0001"], ["xxl", 1400, f"PCAT{yy}AAAA0001"]]
 )
 assert updated_brand["is_active"] is True
 assert len(updated_brand["size_master"]) == 4
@@ -202,13 +203,19 @@ variant_a = ProductVariantOperations.create_variant(
         spoiler="Integrated",
         chinstrap_lock="Quick Release",
         pinlock="Optional",
-        mrp={"INR": 1850.0},
         is_active=True
     ),
     current_user=admin_user
 )
 assert variant_a["variant_id"] == f"PVAR{yy}AAAA0001"
 assert variant_a["sku_no"] == "VEGA-BOLT-M-RED"
+
+# Use the new API to set variant MRP and currency
+from app.schemas import VariantMRPUpdate
+ProductVariantOperations.update_variants_mrp(
+    VariantMRPUpdate(variant_ids=[variant_a["variant_id"]], mrp={"INR": 1850.0})
+)
+variant_a = ProductVariantOperations.get_variant_detail(variant_a["variant_id"])
 assert variant_a["mrp"] == {"INR": 1850.0}
 assert variant_a["carton_box_size"] == 4
 assert variant_a["carton_barcode"] == "8901234567890-C"
@@ -238,14 +245,18 @@ variant_a2 = ProductVariantOperations.create_variant(
         spoiler="Integrated",
         chinstrap_lock="Quick Release",
         pinlock="Optional",
-        mrp={"INR": 1900.0},
         is_active=True
     ),
     current_user=admin_user
 )
 assert variant_a2["variant_id"] == f"PVAR{yy}AAAA0002"
 assert variant_a2["size"] == 600
-assert variant_a2["mrp"] == {"INR": 1900.0}
+
+# Set MRP using the update operation
+ProductVariantOperations.update_variants_mrp(
+    VariantMRPUpdate(variant_ids=[variant_a2["variant_id"]], mrp={"INR": 1900.0})
+)
+variant_a2 = ProductVariantOperations.get_variant_detail(variant_a2["variant_id"])
 print(f"✓ Sister ProductVariant created with ID {variant_a2['variant_id']} (size auto-resolved to 600)!")
 
 # Fetch detail of variant_a and verify sister_variants list contains variant_a2 details
@@ -325,13 +336,16 @@ updated_variant = ProductVariantOperations.update_variant(
     f"PVAR{yy}AAAA0001",
     ProductVariantUpdate(
         is_active=False,
-        mrp={"INR": 2200.0},
         carton_box_size=6,
         carton_barcode="8901234567890-C-UPDATED",
         size=62,
         certification=["DOT", "ISI", "ECE"]
     )
 )
+ProductVariantOperations.update_variants_mrp(
+    VariantMRPUpdate(variant_ids=[f"PVAR{yy}AAAA0001"], mrp={"INR": 2200.0})
+)
+updated_variant = ProductVariantOperations.get_variant_detail(f"PVAR{yy}AAAA0001")
 assert updated_variant["is_active"] is False
 assert updated_variant["mrp"] == {"INR": 2200.0}
 assert updated_variant["carton_box_size"] == 6
